@@ -139,20 +139,16 @@ Patch sites, all verified to exist:
 - Tunnels never migrate between web application replicas.
 - Authorization is never cached in Redis; it is always re-derived from the database.
 
-### 2.6 Known per-replica state left unaddressed
+### 2.6 Brute-force ban tracking
 
 `guacamole-auth-ban` tracks authentication failures in a per-JVM Caffeine cache
 (`InMemoryAuthenticationFailureTracker.java:47`). With N replicas behind a load
 balancer, an attacker receives up to N times the configured `maxAttempts` before
-being banned, and a ban applied on one replica is not observed by the others.
+being banned, and a ban applied on one replica is not observed by the others — a
+security weakening that scales linearly with replica count.
 
-This is a real, security-relevant weakening that scales with replica count, and it is
-**not fixed by this design**. It is recorded here so the decision is explicit rather
-than accidental. The fix is small once `ClusterStore` exists — a Redis-backed
-`AuthenticationFailureTracker` keyed by client address — and should be scheduled as
-follow-on work after P4. Until then, deployments relying on `guacamole-auth-ban`
-should reduce `maxAttempts` proportionally to replica count, or enforce rate limiting
-at the ingress.
+This is **in scope, delivered in P4** alongside the token store, since both concern
+cluster-wide authentication state. Design in §5.7.
 
 ---
 
@@ -201,6 +197,8 @@ guac:seat:user:{user}:g:{gid}   ZSET  uuid -> ts   per-user-per-group limit
 guac:route:{guacdConnectionId}  STR   guacdEndpoint          EXPIRE 30s
 guac:share:{shareKey}           HASH  guacdConnectionId, guacdEndpoint,
                                       connIdentifier, sharingProfileId
+guac:authfail:{address}         STR   failure count, EXPIRE = ban duration
+
 guac:token:{sha256(token)}      HASH  username, authProviderIdentifier,
                                       remoteAddress, remoteHostname,
                                       authTime, lastAccess
@@ -460,6 +458,44 @@ Tunnels still do not migrate. The token store means a replica death costs a user
 their sessions, not their login: they land on a healthy replica already
 authenticated and reconnect.
 
+### 5.7 Cluster-wide brute-force ban tracking
+
+`AuthenticationFailureTracker` (`AuthenticationFailureTracker.java:29`) is a
+three-method interface — `notifyAuthenticationRequestReceived`,
+`notifyAuthenticationFailed`, `notifyAuthenticationSuccess` — and
+`BanningAuthenticationListener.java:155` is the single construction site of the
+in-memory implementation. A `RedisAuthenticationFailureTracker` is therefore a
+substitution at one line, selected when `cluster-enabled` is true.
+
+Redis model, one key per client address:
+
+- **Failure** — a Lua script performs `INCR guac:authfail:{address}` followed by
+  `EXPIRE key banDuration`, refreshing the window on each failure. This matches the
+  in-memory semantics, where `AuthenticationFailureStatus.notifyFailed()` updates
+  `lastFailure` and `isValid()` measures from it.
+- **Request received** — read the counter; if it is at or above `maxAttempts`, throw
+  exactly as the in-memory tracker does, so the listener contract is unchanged.
+- **Success** — `DEL guac:authfail:{address}`.
+
+The increment and threshold check share one script so that concurrent attempts
+against different replicas cannot both observe a count below the limit.
+
+**One semantic change, stated deliberately.** The in-memory tracker bounds memory
+with Caffeine's `maximumSize(maxAddresses)`
+(`InMemoryAuthenticationFailureTracker.java:84-85`). Redis has no equivalent bound,
+so the `maxAddresses` property no longer caps anything: memory instead scales with
+the number of *distinct* addresses failing authentication within one ban window.
+Each key is a small counter with a TTL, so even a million distinct addresses is on
+the order of tens of megabytes and drains automatically. It is nonetheless an
+attacker-influenced allocation.
+
+Do **not** mitigate this by setting an LRU `maxmemory-policy` on this Redis instance:
+eviction would silently discard tunnel index and seat state, converting a nuisance
+into a correctness failure. The correct outer defense is connection rate limiting at
+the ingress, which should be in place regardless. The behavior change is called out
+in the P4 release notes so that operators do not assume `maxAddresses` still bounds
+anything.
+
 ---
 
 ## 6. Error handling and degradation
@@ -474,6 +510,7 @@ have opposite risk profiles.
 | Seats and limits | Degrade to the retained in-memory per-replica counters | Limits are then enforced per replica, which is exactly current upstream behavior, rather than not at all. Log at `ERROR`; raise a health gauge |
 | Join and share routing | **Fail closed** — reject the join | A join without a route lookup would connect to an arbitrary `guacd` and open a *new* session rather than the one the user was authorized to observe |
 | Token rehydration | **Fail closed** — `401`, re-login | Degrades to current single-node behavior |
+| Brute-force ban tracking | Degrade to the in-memory per-replica tracker | Failing closed would refuse **all** logins during a Redis outage — a self-inflicted denial of service. Per-replica counting is the current upstream behavior and the correct fallback |
 | `guacd` load and admin listing | Degrade to replica-local view | Current upstream behavior |
 
 Redis being down means the cluster continues serving connections with per-replica
@@ -565,6 +602,8 @@ test, so this rig constitutes the acceptance criteria.
 | 7 | Logout on A | Token immediately unusable on B |
 | 8 | Redis stopped | Connects still succeed under per-replica limits; joins rejected; rehydration returns `401` |
 | 9 | One replica's clock skewed by +5 minutes | No premature eviction, proving scores originate from `redis.call('TIME')` |
+| 10 | `maxAttempts-1` failed logins on replica A, then one more on replica B | The attempt on B is refused; failures counted cluster-wide, not per replica |
+| 11 | Address banned via replica A | Replica B refuses it immediately, with no local failures recorded |
 
 Scenarios 6b, 8, and 9 cover failure modes that would otherwise ship silently.
 
@@ -590,7 +629,7 @@ cost sessions only — never permanently held seats, never a wedged limiter.
 | **P1** | `GuacdPool`, `GuacdSelector`, route map, patch at `AbstractGuacamoleTunnelService.java:553`. Minimum viable deployment: two replicas, sticky ingress, `guacd` headless Service, single Redis | **Multi-`guacd` with working session join.** Largest single win; shippable alone |
 | **P2** | Cluster seats, replacing `RestrictedGuacamoleTunnelService.java:63,73` | Concurrency limits correct across the cluster |
 | **P3** | Cluster active-connection index and kill; remote `SharedConnectionDefinition` refactor | Cluster-wide admin visibility; cross-replica share keys |
-| **P4** | Redis token store, rehydration SPI, cluster-wide logout | Login survives replica death for JDBC sessions |
+| **P4** | Redis token store, rehydration SPI, cluster-wide logout, Redis-backed `AuthenticationFailureTracker` | Login survives replica death for JDBC sessions; brute-force bans counted and enforced cluster-wide |
 | **P5** | Hardening: Redis Sentinel, Helm chart, Redis TLS and ACL, Prometheus metrics | Production-ready |
 
 Sticky ingress belongs to P1 rather than P5 because nothing works across two replicas
@@ -624,6 +663,7 @@ New `guacamole.properties` keys, all read through the existing `Environment` abs
 | `guacd-circuit-break-duration` | `15000` | Milliseconds an endpoint stays circuit-broken after a connect failure |
 | `cluster-token-store-enabled` | `false` | Enables §5; requires Redis authentication and TLS |
 | `cluster-rehydratable-providers` | `jdbc` | Allowlist of provider identifiers permitted to rehydrate |
+| `cluster-ban-tracking-enabled` | `true` when `cluster-enabled` | Routes `guacamole-auth-ban` through Redis; `false` retains per-replica in-memory tracking |
 
 `cluster-enabled=false` must leave every code path behaviorally identical to
 upstream, so the fork remains deployable single-node without Redis.
