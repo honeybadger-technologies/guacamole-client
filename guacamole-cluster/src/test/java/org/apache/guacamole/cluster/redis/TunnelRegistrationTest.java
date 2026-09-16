@@ -28,12 +28,28 @@ import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMethod;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.testcontainers.DockerClientFactory;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 public class TunnelRegistrationTest {
+
+    /**
+     * Skips this class rather than failing it when no Docker daemon is
+     * reachable. The image build runs the full test suite inside a container
+     * that has no daemon of its own, and a Redis-backed test cannot be
+     * meaningfully run there.
+     */
+    @BeforeAll
+    public static void requireDocker() {
+        Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
+                "Docker is not available; skipping Redis-backed tests.");
+    }
+
 
     private static final long STALE_WINDOW_MS = 30000L;
 

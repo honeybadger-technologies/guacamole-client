@@ -21,11 +21,27 @@ package org.apache.guacamole.cluster.redis;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
+import org.testcontainers.DockerClientFactory;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class RedisHarnessTest {
+
+    /**
+     * Skips this class rather than failing it when no Docker daemon is
+     * reachable. The image build runs the full test suite inside a container
+     * that has no daemon of its own, and a Redis-backed test cannot be
+     * meaningfully run there.
+     */
+    @BeforeAll
+    public static void requireDocker() {
+        Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
+                "Docker is not available; skipping Redis-backed tests.");
+    }
+
 
     @Test
     public void redisContainerRespondsToPing() {
