@@ -80,6 +80,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          # Measured idle: ~2m CPU / 240-310Mi (JVM heap dominates memory).
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           readinessProbe:
             httpGet:
               path: /guacamole/

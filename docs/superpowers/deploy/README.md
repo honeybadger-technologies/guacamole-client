@@ -69,6 +69,10 @@ kubectl apply -f guacamole-deployment.yaml   # ConfigMap + Deployment + Service
 kubectl rollout status deploy/guacamole
 
 kubectl apply -f ingress-sticky.yaml
+
+# Autoscaling. Requires metrics-server and the resource requests already
+# declared in the deployment manifests above.
+kubectl apply -f hpa.yaml
 ```
 
 A database is still required — this stack carries only the cluster pieces. Add
@@ -173,6 +177,87 @@ available."* A **new** desktop session here is a serious failure, not a cosmetic
 one — it means a user asked to join a colleague's session and silently got a
 fresh login instead.
 
+### 4. Scaling guacd up and down
+
+**Measured on devqa, 2026-09-16.** Membership is DNS, so nothing needs telling.
+
+Scale up, then confirm the new pods actually receive traffic — not merely that
+DNS resolves:
+
+```bash
+kubectl scale deploy/guacd --replicas=4
+kubectl exec deploy/guacamole -- getent hosts guacd     # one line per ready pod
+```
+
+Opening 12 connections across a freshly-scaled 4-pod pool distributed them
+**3 / 3 / 3 / 3**, both new pods included. Note `getent` reports the *OS*
+resolver, not the JVM's view — the pool caches for 5s on top of the JVM's own
+DNS TTL, so distribution is the real check and DNS is only a precondition.
+
+Scaling down to 1 shrank the pool and sent **6 of 6** subsequent connections to
+the survivor.
+
+**Scaling guacd down disconnects users.** Every session on a removed pod dies;
+guacd session state is never replicated. That is a design decision of this work,
+which is why the HPA in `hpa.yaml` scales down far more slowly than it scales up.
+
+### 5. Losing a replica, and the stale window
+
+This is the crash-recovery mechanism, and the reason cluster entries carry a
+heartbeat score at all.
+
+```bash
+# Open a session on a specific replica, then kill that replica outright.
+# --grace-period=0 --force means the cleanup path never runs.
+kubectl delete pod <replica> --grace-period=0 --force
+watch "kubectl exec deploy/redis -- redis-cli exists 'guac:tunnel:<uuid>'"
+```
+
+Measured with `cluster-stale-window` at its 30000ms default: the route key
+disappeared at ~27s and the tunnel record at ~36s, with **no cleanup code
+running anywhere**. The heartbeat that had been refreshing their TTLs died with
+the replica, so they simply expired.
+
+**One thing does not get cleaned up, and it is worth knowing.** The tunnel's
+membership in the `guac:idx:*` sorted sets survives. Verified against a dead
+tunnel 84s after the replica was killed:
+
+```
+zcard  guac:idx:guacd:<endpoint>              -> 1     (member still present)
+zcount guac:idx:guacd:<endpoint> (cutoff +inf -> 0     (not counted as live)
+```
+
+Correctness is unaffected: `countTunnels` filters by score, so a dead member is
+never counted and never influences selection. But nothing physically removes it.
+The only pruning is the `ZREMRANGEBYSCORE` inside the seat script, and **the seat
+script is not wired up until P2** — so in a P1-only deployment these tombstones
+accumulate, one per tunnel lost to an ungraceful replica death. Gracefully closed
+tunnels are removed properly by `unregisterTunnel`, so this grows with crashes,
+not with traffic. Worth a P2 note rather than a P1 fix.
+
+### 6. Autoscaling
+
+`hpa.yaml` scales both tiers on CPU (the webapp also on memory), at the 70%/80%
+targets this cluster already uses elsewhere. It requires `metrics-server` and the
+resource **requests** set in the deployment manifests — an HPA divides by the
+request, so without them it cannot compute utilization and silently never scales.
+
+Up and down are deliberately asymmetric, because scaling down costs user
+sessions: 60s stabilization up, versus 900s (guacd) and 600s (webapp) down, and
+never more than one pod per 5 minutes. Observed holding a manual over-scale in
+place rather than shedding pods immediately:
+
+```
+AbleToScale=True  ScaleDownStabilized: recent recommendations were higher than
+                  current one, applying the highest recent recommendation
+```
+
+**CPU is a poor proxy for guacd load.** The cluster already knows the exact live
+tunnel count per guacd instance — that is what `guac:idx:guacd:<endpoint>` is —
+but an HPA cannot read it without a custom metrics adapter. Scaling on that
+number directly (KEDA's Redis scaler, or a prometheus-adapter external metric)
+would be strictly better, and belongs with the P5 hardening work rather than here.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
@@ -188,6 +273,9 @@ Stated so a later phase's gap is not mistaken for a bug in this one:
 - **Auth tokens are still replica-local**, so a replica death forces re-login.
   That is P4.
 - **Brute-force ban counts are still per-replica.** That is P4.
+- **Dead index members are never pruned**, because the only pruner is the seat
+  script and that is P2. See section 5 — harmless to correctness, unbounded over
+  a long-lived P1-only deployment.
 
 Sticky sessions are what make P1 correct in the meantime: every user stays on
 one replica, so the replica-local state above stays consistent for that user.

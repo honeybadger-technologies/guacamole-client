@@ -56,6 +56,16 @@ spec:
           image: guacamole/guacd:1.6.0
           ports:
             - containerPort: 4822
+          # Requests are what the HPA divides by; without them it cannot
+          # compute utilization and will not scale at all. Measured idle:
+          # ~1m CPU / ~10Mi. The ceiling is per-session encoding work.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
           readinessProbe:
             tcpSocket:
               port: 4822
