@@ -23,10 +23,14 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
+import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
@@ -128,29 +132,193 @@ public class RedisClusterStore implements ClusterStore {
 
     }
 
+    /**
+     * Returns every sorted set the given tunnel is indexed in. The group index
+     * is included only when the tunnel was established through a balancing
+     * group.
+     *
+     * @param registration
+     *     The tunnel to index.
+     *
+     * @return
+     *     Every index key for the given tunnel.
+     */
+    private List<String> indexKeys(TunnelRegistration registration) {
+
+        List<String> keys = new ArrayList<String>(5);
+        keys.add(ClusterKeys.ALL_INDEX);
+        keys.add(ClusterKeys.userIndex(registration.getUsername()));
+        keys.add(ClusterKeys.guacdIndex(registration.getEndpoint().toKey()));
+        keys.add(ClusterKeys.connectionIndex(registration.getConnectionIdentifier()));
+
+        if (registration.getGroupIdentifier() != null)
+            keys.add(ClusterKeys.groupIndex(registration.getGroupIdentifier()));
+
+        return keys;
+
+    }
+
+    /**
+     * @return
+     *     The current time according to the Redis server, in milliseconds.
+     */
+    private long serverTimeMillis(RedisCommands<String, String> commands) {
+        List<String> time = commands.time();
+        return (Long.parseLong(time.get(0)) * 1000L)
+                + (Long.parseLong(time.get(1)) / 1000L);
+    }
+
     @Override
     public void registerTunnel(TunnelRegistration registration) throws GuacamoleException {
-        throw new UnsupportedOperationException("Implemented in Task 5.");
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+            long now = serverTimeMillis(commands);
+
+            Map<String, String> record = new HashMap<String, String>();
+            record.put("nodeId", registration.getNodeId());
+            record.put("guacdConnectionId", registration.getGuacdConnectionId());
+            record.put("guacdEndpoint", registration.getEndpoint().toKey());
+            record.put("connIdentifier", registration.getConnectionIdentifier());
+            record.put("username", registration.getUsername());
+            record.put("startTime", Long.toString(registration.getStartTime()));
+
+            if (registration.getGroupIdentifier() != null)
+                record.put("groupIdentifier", registration.getGroupIdentifier());
+
+            if (registration.getSharingProfileIdentifier() != null)
+                record.put("sharingProfileId", registration.getSharingProfileIdentifier());
+
+            if (registration.getRemoteHost() != null)
+                record.put("remoteHost", registration.getRemoteHost());
+
+            String tunnelKey = ClusterKeys.tunnel(registration.getTunnelUuid());
+            commands.hset(tunnelKey, record);
+            commands.pexpire(tunnelKey, staleWindowMs);
+
+            for (String key : indexKeys(registration))
+                commands.zadd(key, (double) now, registration.getTunnelUuid());
+
+            if (registration.getGuacdConnectionId() != null) {
+                String routeKey = ClusterKeys.route(registration.getGuacdConnectionId());
+                commands.psetex(routeKey, staleWindowMs, registration.getEndpoint().toKey());
+            }
+
+            available = true;
+
+        }
+        catch (RedisException e) {
+            available = false;
+            throw new GuacamoleServerException("Unable to register tunnel with cluster.", e);
+        }
+
     }
 
     @Override
     public void unregisterTunnel(TunnelRegistration registration) throws GuacamoleException {
-        throw new UnsupportedOperationException("Implemented in Task 5.");
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+
+            for (String key : indexKeys(registration))
+                commands.zrem(key, registration.getTunnelUuid());
+
+            commands.del(ClusterKeys.tunnel(registration.getTunnelUuid()));
+
+            if (registration.getGuacdConnectionId() != null)
+                commands.del(ClusterKeys.route(registration.getGuacdConnectionId()));
+
+            available = true;
+
+        }
+        catch (RedisException e) {
+            available = false;
+            throw new GuacamoleServerException("Unable to unregister tunnel from cluster.", e);
+        }
+
     }
 
     @Override
     public void heartbeat(Collection<TunnelRegistration> registrations) throws GuacamoleException {
-        throw new UnsupportedOperationException("Implemented in Task 5.");
+
+        if (registrations.isEmpty())
+            return;
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+            long now = serverTimeMillis(commands);
+
+            for (TunnelRegistration registration : registrations) {
+
+                for (String key : indexKeys(registration))
+                    commands.zadd(key, (double) now, registration.getTunnelUuid());
+
+                commands.pexpire(ClusterKeys.tunnel(registration.getTunnelUuid()), staleWindowMs);
+
+                if (registration.getGuacdConnectionId() != null)
+                    commands.pexpire(ClusterKeys.route(registration.getGuacdConnectionId()),
+                            staleWindowMs);
+
+            }
+
+            available = true;
+
+        }
+        catch (RedisException e) {
+            available = false;
+            throw new GuacamoleServerException("Unable to refresh cluster heartbeat.", e);
+        }
+
     }
 
     @Override
     public GuacdEndpoint lookupRoute(String guacdConnectionId) throws GuacamoleException {
-        throw new UnsupportedOperationException("Implemented in Task 5.");
+
+        try {
+
+            String value = commands().get(ClusterKeys.route(guacdConnectionId));
+            available = true;
+
+            if (value == null)
+                return null;
+
+            return GuacdEndpoint.fromKey(value);
+
+        }
+        catch (RedisException e) {
+            available = false;
+            throw new GuacamoleServerException("Unable to look up guacd route.", e);
+        }
+
     }
 
     @Override
     public long countTunnels(GuacdEndpoint endpoint) {
-        throw new UnsupportedOperationException("Implemented in Task 5.");
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+            long cutoff = serverTimeMillis(commands) - staleWindowMs;
+
+            Long count = commands.zcount(ClusterKeys.guacdIndex(endpoint.toKey()),
+                    io.lettuce.core.Range.from(
+                            io.lettuce.core.Range.Boundary.excluding((double) cutoff),
+                            io.lettuce.core.Range.Boundary.unbounded()));
+
+            available = true;
+            return count == null ? 0L : count;
+
+        }
+        catch (RedisException e) {
+            available = false;
+            logger.warn("Unable to count tunnels for guacd \"{}\". Treating as unloaded.",
+                    endpoint, e);
+            return 0L;
+        }
+
     }
 
     @Override
