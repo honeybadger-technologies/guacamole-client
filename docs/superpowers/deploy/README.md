@@ -7,8 +7,9 @@ What P1 delivers, and therefore what is worth verifying here:
 
 1. **Multi-guacd load spreading** — new connections go to the least-loaded
    `guacd` in the pool.
-2. **Cross-replica session join** — a join reaches the `guacd` already hosting
-   the session, whichever replica serves the request.
+2. **Join routing** — when a join happens, it reaches the `guacd` already
+   hosting the session. Note the limit measured below: in P1 a join can only be
+   *initiated* on the replica that owns the session.
 3. **Fail-closed routing** — if the route is gone, the join is refused rather
    than silently opening a new desktop.
 
@@ -114,22 +115,50 @@ selection is not consulting cluster load — check that `countTunnels` is reachi
 Redis, and that `guacd-cluster-dns` is set rather than falling back to the single
 configured `guacd`.
 
-### 2. Cross-replica session join
+### 2. Join routing, and the P1 limit on it
 
-Open a connection and note which Guacamole pod served it. Force the next request
-to the *other* pod — delete the `GUAC_ROUTE` cookie, or
-`kubectl port-forward` straight to the other pod — and join the same connection.
+**Measured on a real two-replica deployment (devqa, 2026-09-16): a join cannot
+be initiated from a replica that does not own the session.** With a session open
+and provably live on replica A — registered in Redis under A's `nodeId` — the
+two replicas disagree:
 
-**Expected:** it attaches to the existing session rather than starting a new
-desktop. Inspect the route that made it work:
+```
+podA  /api/session/data/postgresql/activeConnections  ->  {"6caf3bd5-...": {...}}
+podB  /api/session/data/postgresql/activeConnections  ->  {}
+```
+
+That is not a bug in the routing. It is the replica-local active-connection
+directory listed under *What P1 does NOT do* below, which lands in P3. The
+routing half is built and works; the discovery half is not here yet, so replica
+B has no identifier to join with.
+
+What you can verify today, on the owning replica:
+
+```bash
+# Open a session, then join it. The connect response carries the tunnel session
+# token in the Guacamole-Tunnel-Token header, which read/write requests need.
+curl -s -D headers.txt -X POST "$BASE/tunnel?connect" \
+    --data-urlencode "token=$AUTH" --data-urlencode "GUAC_DATA_SOURCE=postgresql" \
+    --data-urlencode "GUAC_ID=<connection id>" --data-urlencode "GUAC_TYPE=c" \
+    --data-urlencode "GUAC_WIDTH=1024" --data-urlencode "GUAC_HEIGHT=768" \
+    --data-urlencode "GUAC_DPI=96" --data-urlencode "GUAC_TIMEZONE=UTC" \
+    --data-urlencode "GUAC_AUDIO=audio/L16" --data-urlencode "GUAC_IMAGE=image/png"
+```
+
+Then join the resulting active connection with `GUAC_TYPE=a`. A successful join
+returns a new tunnel UUID, and the route it used is visible as:
 
 ```bash
 kubectl exec deploy/redis -- redis-cli --scan --pattern 'guac:route:*'
-kubectl exec deploy/redis -- redis-cli get 'guac:route:$<connection id>'
+kubectl exec deploy/redis -- redis-cli get 'guac:route:$<guacd connection id>'
 ```
 
 The value is the endpoint key (`host|port|encryptionMethod`) of the `guacd`
-hosting that session, and the join must have reached exactly that pod.
+hosting that session.
+
+**End-to-end cross-replica join therefore requires P3**, which makes the active
+connection directory (and share keys) cluster-wide. P1 supplies the route table
+it will use.
 
 ### 3. Fail-closed on a vanished join target
 
@@ -151,7 +180,9 @@ Stated so a later phase's gap is not mistaken for a bug in this one:
 - **Concurrency limits are still per-replica.** The seat script is built and
   tested but not wired into `RestrictedGuacamoleTunnelService`. That is P2.
 - **The admin active-connection view is still replica-local**, and a kill only
-  works on the owning replica. That is P3.
+  works on the owning replica. That is P3. **This is also what stops a join from
+  being initiated on a non-owning replica** — verified on a live two-replica
+  deployment, see section 2 above.
 - **Share keys still do not cross replicas** — `HashSharedConnectionMap` remains
   bound. That is P3.
 - **Auth tokens are still replica-local**, so a replica death forces re-login.

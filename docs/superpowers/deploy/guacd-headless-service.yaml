@@ -50,7 +50,10 @@ spec:
     spec:
       containers:
         - name: guacd
-          image: guacamole/guacd:1.6.1
+          # 1.6.0 is the newest guacd published upstream; there is no 1.6.1
+          # tag. Safe to pair with a 1.6.1 webapp -- this work never touches
+          # guacamole-server, and the protocol is stable across patch releases.
+          image: guacamole/guacd:1.6.0
           ports:
             - containerPort: 4822
           readinessProbe:
