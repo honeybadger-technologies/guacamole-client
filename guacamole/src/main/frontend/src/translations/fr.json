@@ -280,6 +280,7 @@
         "FIELD_PLACEHOLDER_FILTER" : "@:APP.FIELD_PLACEHOLDER_FILTER",
 
         "INFO_ACTIVE_USER_COUNT" : "@:APP.INFO_ACTIVE_USER_COUNT",
+        "INFO_AVAILABLE_CONNECTIONS" : "{AVAILABLE} {AVAILABLE, plural, one{connexion disponible} other{connexions disponibles}} sur {TOTAL}",
 
         "INFO_NO_RECENT_CONNECTIONS" : "Pas de connexion récente.",
 
@@ -701,7 +702,8 @@
         "FIELD_OPTION_SERVER_LAYOUT_HU_HU_QWERTZ" : "Hongrois (Qwertz)",
         "FIELD_OPTION_SERVER_LAYOUT_IT_IT_QWERTY" : "Italien (Qwerty)",
         "FIELD_OPTION_SERVER_LAYOUT_JA_JP_QWERTY" : "Japonais (Qwerty)",
-        "FIELD_OPTION_SERVER_LAYOUT_NO_NO_QWERTY" : "Norvégien (Qwerty)",
+        "FIELD_OPTION_SERVER_LAYOUT_NB_NO_QWERTY" : "Norvégien Bokmål (Qwerty)",
+        "FIELD_OPTION_SERVER_LAYOUT_NO_NO_QWERTY" : "Norvégien Nynorsk (Qwerty)",
         "FIELD_OPTION_SERVER_LAYOUT_PL_PL_QWERTY" : "Polonais (Qwerty)",
         "FIELD_OPTION_SERVER_LAYOUT_PT_BR_QWERTY" : "Portugais Brésilien (Qwerty)",
         "FIELD_OPTION_SERVER_LAYOUT_PT_PT_QWERTY" : "Portugais (Qwerty)",
