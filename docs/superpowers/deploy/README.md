@@ -308,6 +308,58 @@ The last one is worth dwelling on: the symptom was
 not be loaded`, which names neither Redis nor clustering. It only appeared because
 pods happened to restart while Redis was down.
 
+### 8. Cluster-wide listing and kill (P3a)
+
+**Measured on devqa, 2026-09-17**, two replicas.
+
+**A session is visible from the replica that does not own it.** Opened on
+replica A, then read from replica B:
+
+```
+A  /api/session/data/postgresql/activeConnections -> {"f91a88a4-...": {...}}
+B  /api/session/data/postgresql/activeConnections -> {"f91a88a4-...": {..., "connectable": false}}
+```
+
+The same identifier, connection, start date, remote host and username. Before
+P3a, B returned `{}` — that is the measurement recorded in section 2, and this
+is what changed it. `connectable` is deliberately false: a remote session is
+visible and killable, but not joinable until P3b.
+
+**It can be killed from the replica that does not own it.** `DELETE` issued to
+B returned **204 in 0.138 s**, after which both replicas listed `{}`. The logs
+show the round trip:
+
+```
+13:14:23.037  replica B  successfully deleted active connection "f91a88a4-..."
+13:14:23.041  replica A  HTTP tunnel request rejected: No such tunnel.
+```
+
+B published the request and A closed its tunnel 4 ms later, at which point A's
+held reader failed. The kill crossed replicas rather than B silently doing
+nothing.
+
+**Clustering disabled is unchanged from upstream.** With `CLUSTER_ENABLED=false`
+and a session open on A, A lists it and B lists `{}` — the replica-local view
+upstream produces.
+
+#### Two findings
+
+**The spec was wrong about `TrackedActiveConnection`.** §4.5 states it "exposes
+plain setters for every field the UI needs". `setConnectionIdentifier` instead
+throws `UnsupportedOperationException`, and `getConnectionIdentifier()` reads
+through to the connection object — so a remote entry failed with *"Unexpected
+internal error: The connection identifier of TrackedActiveConnection is
+inherited from the underlying connection"* and would have failed on
+serialisation even without calling the setter. The connection is loaded from the
+database instead, which every replica shares.
+
+**A remote kill during a Redis outage returns 404, not a timeout.** The bounded
+two-second wait is reached only when the session was listed and Redis died
+before the kill. Otherwise `deleteObject` calls `retrieveObject` first, the
+outage makes the remote session invisible, and the request 404s in ~0.025 s.
+That is honest — it never reports success — but it is not the path the plan
+predicted, and the timeout is a narrower race than it first appears.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
