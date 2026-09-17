@@ -131,7 +131,12 @@ public class TrackedActiveConnection extends RestrictedObject implements ActiveC
         super.init(currentUser);
         this.connectionRecord = activeConnectionRecord;
         this.connectable      = connectable;
-        
+
+        // A session owned by another replica has no local record; every field
+        // is supplied by the caller through the setters below
+        if (activeConnectionRecord == null)
+            return;
+
         // Copy all non-sensitive data from given record
         this.connection               = activeConnectionRecord.getConnection();
         this.sharingProfileIdentifier = activeConnectionRecord.getSharingProfileIdentifier();
