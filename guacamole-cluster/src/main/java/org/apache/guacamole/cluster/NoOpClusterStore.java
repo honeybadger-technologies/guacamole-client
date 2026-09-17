@@ -20,6 +20,7 @@
 package org.apache.guacamole.cluster;
 
 import java.util.Collection;
+import java.util.Collections;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 
@@ -63,6 +64,11 @@ public class NoOpClusterStore implements ClusterStore {
     @Override
     public long countTunnels(GuacdEndpoint endpoint) {
         return 0L;
+    }
+
+    @Override
+    public Collection<TunnelRegistration> listTunnels() {
+        return Collections.<TunnelRegistration>emptyList();
     }
 
     @Override

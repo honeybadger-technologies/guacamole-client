@@ -411,6 +411,66 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
+    public Collection<TunnelRegistration> listTunnels() {
+
+        List<TunnelRegistration> tunnels = new ArrayList<TunnelRegistration>();
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+            long cutoff = serverTimeMillis(commands) - staleWindowMs;
+
+            // Score-filtered, so members left behind by a dead replica are
+            // never listed even before anything prunes them
+            List<String> seatTokens = commands.zrangebyscore(ClusterKeys.ALL_INDEX,
+                    io.lettuce.core.Range.from(
+                            io.lettuce.core.Range.Boundary.excluding((double) cutoff),
+                            io.lettuce.core.Range.Boundary.unbounded()));
+
+            for (String seatToken : seatTokens) {
+
+                Map<String, String> record = commands.hgetall(ClusterKeys.tunnel(seatToken));
+
+                // The hash expires on its own TTL, so a member can outlive it
+                if (record.isEmpty())
+                    continue;
+
+                String endpointKey = record.get("guacdEndpoint");
+                String startTime = record.get("startTime");
+
+                tunnels.add(new TunnelRegistration(
+                        seatToken,
+                        record.get("nodeId"),
+                        record.get("guacdConnectionId"),
+                        endpointKey != null ? GuacdEndpoint.fromKey(endpointKey) : null,
+                        record.get("connIdentifier"),
+                        record.get("groupIdentifier"),
+                        record.get("sharingProfileId"),
+                        record.get("username"),
+                        record.get("remoteHost"),
+                        startTime != null ? Long.parseLong(startTime) : 0L,
+                        record.get("recordUuid")));
+
+            }
+
+            available = true;
+
+        }
+
+        // The administrative view degrades to replica-local rather than
+        // failing outright (spec 6.1)
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to list cluster tunnels. The active connection "
+                    + "view will show only this replica's sessions.", e);
+        }
+
+        return tunnels;
+
+    }
+
+    @Override
     public String lookupSeatToken(String recordUuid) {
 
         try {

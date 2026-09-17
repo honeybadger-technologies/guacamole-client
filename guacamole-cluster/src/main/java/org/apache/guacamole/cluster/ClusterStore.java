@@ -124,6 +124,17 @@ public interface ClusterStore {
     long countTunnels(GuacdEndpoint endpoint);
 
     /**
+     * Returns every tunnel currently live anywhere in the cluster, including
+     * those owned by this replica.
+     *
+     * @return
+     *     Every live tunnel, or an empty collection if the store is
+     *     unavailable. Never null -- the administrative view degrades to a
+     *     replica-local listing rather than failing.
+     */
+    Collection<TunnelRegistration> listTunnels();
+
+    /**
      * Returns the seat token of the tunnel whose history record has the given
      * UUID.
      *
