@@ -87,6 +87,21 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public void onKillRequest(ClusterKillHandler handler) {
+        // Nothing is broadcast when clustering is disabled
+    }
+
+    @Override
+    public void requestKill(String recordUuid) throws GuacamoleException {
+        // Every tunnel is local when clustering is disabled
+    }
+
+    @Override
+    public boolean isTunnelLive(String seatToken) {
+        return false;
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }

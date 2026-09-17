@@ -163,6 +163,36 @@ public interface ClusterStore {
     boolean isAvailable();
 
     /**
+     * Registers the handler invoked when any replica requests a kill.
+     *
+     * @param handler
+     *     The handler to invoke for every kill request received.
+     */
+    void onKillRequest(ClusterKillHandler handler);
+
+    /**
+     * Asks every replica to close the tunnel with the given history record
+     * UUID. Only the owning replica will act.
+     *
+     * @param recordUuid
+     *     The UUID of the history record identifying the tunnel to close.
+     *
+     * @throws GuacamoleException
+     *     If the request cannot be published.
+     */
+    void requestKill(String recordUuid) throws GuacamoleException;
+
+    /**
+     * @param seatToken
+     *     The seat token identifying a tunnel.
+     *
+     * @return
+     *     true if that tunnel is still published to the cluster, false if it
+     *     has gone or the store is unavailable.
+     */
+    boolean isTunnelLive(String seatToken);
+
+    /**
      * Releases all resources held by this store.
      */
     void shutdown();

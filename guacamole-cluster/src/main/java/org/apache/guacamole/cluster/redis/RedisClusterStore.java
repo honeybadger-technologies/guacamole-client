@@ -25,6 +25,8 @@ import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.lettuce.core.pubsub.RedisPubSubAdapter;
+import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import java.util.ArrayList;
 import java.time.Duration;
 import java.util.Collection;
@@ -34,6 +36,7 @@ import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
+import org.apache.guacamole.cluster.ClusterKillHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
@@ -80,6 +83,13 @@ public class RedisClusterStore implements ClusterStore {
      * than written off for the lifetime of the replica.
      */
     private volatile long unavailableSince = 0L;
+
+    /**
+     * Dedicated connection for kill broadcasts. Pub/sub cannot share the
+     * command connection: a subscribed Redis connection accepts only
+     * subscription commands.
+     */
+    private volatile StatefulRedisPubSubConnection<String, String> pubSubConnection;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
@@ -507,7 +517,85 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
+    public void onKillRequest(final ClusterKillHandler handler) {
+
+        try {
+
+            StatefulRedisPubSubConnection<String, String> pubSub = client.connectPubSub();
+
+            pubSub.addListener(new RedisPubSubAdapter<String, String>() {
+
+                @Override
+                public void message(String channel, String recordUuid) {
+                    try {
+                        handler.killLocalTunnel(recordUuid);
+                    }
+
+                    // A handler that throws must not kill the subscriber
+                    catch (Throwable e) {
+                        logger.warn("Kill request for \"{}\" could not be handled.",
+                                recordUuid, e);
+                    }
+                }
+
+            });
+
+            pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL);
+            pubSubConnection = pubSub;
+
+        }
+
+        // Without a subscription this replica simply never honours remote
+        // kills; it must still serve connections
+        catch (RedisException e) {
+            logger.error("Unable to subscribe to cluster kill requests. Sessions "
+                    + "on this replica cannot be terminated from another one.", e);
+        }
+
+    }
+
+    @Override
+    public void requestKill(String recordUuid) throws GuacamoleException {
+
+        try {
+            commands().publish(ClusterKeys.KILL_CHANNEL, recordUuid);
+            available = true;
+        }
+
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            throw new GuacamoleServerException("Unable to request cluster kill.", e);
+        }
+
+    }
+
+    @Override
+    public boolean isTunnelLive(String seatToken) {
+
+        try {
+            boolean live = commands().exists(ClusterKeys.tunnel(seatToken)) > 0;
+            available = true;
+            return live;
+        }
+
+        // Reporting "gone" would claim a kill landed when that is unknown;
+        // reporting "live" makes the caller wait out its own timeout and
+        // report failure, which is the honest answer
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return true;
+        }
+
+    }
+
+    @Override
     public void shutdown() {
+
+        StatefulRedisPubSubConnection<String, String> pubSub = pubSubConnection;
+        if (pubSub != null)
+            pubSub.close();
 
         StatefulRedisConnection<String, String> current = connection;
         if (current != null)
