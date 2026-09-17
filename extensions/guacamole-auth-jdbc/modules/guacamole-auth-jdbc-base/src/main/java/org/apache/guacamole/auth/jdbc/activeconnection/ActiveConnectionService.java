@@ -25,6 +25,10 @@ import java.util.Date;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.TunnelRegistration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.guacamole.auth.jdbc.connection.ConnectionService;
+import org.apache.guacamole.auth.jdbc.connection.ModeledConnection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -49,6 +53,11 @@ public class ActiveConnectionService
     implements DirectoryObjectService<TrackedActiveConnection, ActiveConnection> { 
 
     /**
+     * Logger for this class.
+     */
+    private static final Logger logger = LoggerFactory.getLogger(ActiveConnectionService.class);
+
+    /**
      * Service for creating and tracking tunnels.
      */
     @Inject
@@ -66,6 +75,14 @@ public class ActiveConnectionService
      */
     @Inject
     private ClusterStore clusterStore;
+
+    /**
+     * Used to load the connection behind a session owned by another replica.
+     * The database is shared by every replica, so the connection is available
+     * locally even when the session is not.
+     */
+    @Inject
+    private ConnectionService connectionService;
 
     /**
      * Milliseconds to wait for another replica to honour a kill request.
@@ -99,8 +116,22 @@ public class ActiveConnectionService
         activeConnection.init(user, null, false, false);
 
         activeConnection.setIdentifier(registration.getRecordUuid());
-        activeConnection.setConnectionIdentifier(registration.getConnectionIdentifier());
         activeConnection.setSharingProfileIdentifier(registration.getSharingProfileIdentifier());
+
+        // getConnectionIdentifier() reads through to the connection, and
+        // setConnectionIdentifier() deliberately throws, so the real connection
+        // has to be supplied. It is in the shared database regardless of which
+        // replica owns the session.
+        try {
+            activeConnection.setConnection(
+                    connectionService.retrieveObject(user,
+                            registration.getConnectionIdentifier()));
+        }
+        catch (GuacamoleException e) {
+            logger.debug("Connection \"{}\" behind a remote session could not "
+                    + "be read; it will be listed without connection detail.",
+                    registration.getConnectionIdentifier(), e);
+        }
         activeConnection.setStartDate(new Date(registration.getStartTime()));
 
         // A session on another replica cannot be joined from here -- that needs

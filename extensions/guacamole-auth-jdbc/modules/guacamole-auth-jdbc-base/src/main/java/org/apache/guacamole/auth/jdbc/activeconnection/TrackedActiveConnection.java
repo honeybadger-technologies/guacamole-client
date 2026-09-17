@@ -174,6 +174,19 @@ public class TrackedActiveConnection extends RestrictedObject implements ActiveC
         return connection;
     }
 
+    /**
+     * Sets the connection this active connection is using. Required for
+     * sessions owned by another replica, which are described by cluster state
+     * rather than by a local record but must still expose the connection the
+     * administrative view reads through getConnectionIdentifier().
+     *
+     * @param connection
+     *     The connection being actively used.
+     */
+    public void setConnection(ModeledConnection connection) {
+        this.connection = connection;
+    }
+
     @Override
     public String getConnectionIdentifier() {
         return connection.getIdentifier();
