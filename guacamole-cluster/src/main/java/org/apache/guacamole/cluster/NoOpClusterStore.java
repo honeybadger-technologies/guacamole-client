@@ -66,6 +66,11 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public String lookupSeatToken(String recordUuid) {
+        return null;
+    }
+
+    @Override
     public String getNodeId() {
         return "local";
     }

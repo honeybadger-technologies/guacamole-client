@@ -261,6 +261,9 @@ public class RedisClusterStore implements ClusterStore {
             if (registration.getRemoteHost() != null)
                 record.put("remoteHost", registration.getRemoteHost());
 
+            if (registration.getRecordUuid() != null)
+                record.put("recordUuid", registration.getRecordUuid());
+
             String tunnelKey = ClusterKeys.tunnel(registration.getTunnelUuid());
             commands.hset(tunnelKey, record);
             commands.pexpire(tunnelKey, staleWindowMs);
@@ -272,6 +275,12 @@ public class RedisClusterStore implements ClusterStore {
                 String routeKey = ClusterKeys.route(registration.getGuacdConnectionId());
                 commands.psetex(routeKey, staleWindowMs, registration.getEndpoint().toKey());
             }
+
+            // Lets a kill addressed by history record UUID find the cluster
+            // state, which is keyed by seat token
+            if (registration.getRecordUuid() != null)
+                commands.psetex(ClusterKeys.record(registration.getRecordUuid()),
+                        staleWindowMs, registration.getTunnelUuid());
 
             available = true;
 
@@ -298,6 +307,9 @@ public class RedisClusterStore implements ClusterStore {
 
             if (registration.getGuacdConnectionId() != null)
                 commands.del(ClusterKeys.route(registration.getGuacdConnectionId()));
+
+            if (registration.getRecordUuid() != null)
+                commands.del(ClusterKeys.record(registration.getRecordUuid()));
 
             available = true;
 
@@ -330,6 +342,10 @@ public class RedisClusterStore implements ClusterStore {
 
                 if (registration.getGuacdConnectionId() != null)
                     commands.pexpire(ClusterKeys.route(registration.getGuacdConnectionId()),
+                            staleWindowMs);
+
+                if (registration.getRecordUuid() != null)
+                    commands.pexpire(ClusterKeys.record(registration.getRecordUuid()),
                             staleWindowMs);
 
             }
@@ -390,6 +406,25 @@ public class RedisClusterStore implements ClusterStore {
             logger.warn("Unable to count tunnels for guacd \"{}\". Treating as unloaded.",
                     endpoint, e);
             return 0L;
+        }
+
+    }
+
+    @Override
+    public String lookupSeatToken(String recordUuid) {
+
+        try {
+            String token = commands().get(ClusterKeys.record(recordUuid));
+            available = true;
+            return token;
+        }
+
+        // The caller degrades to a replica-local view rather than failing
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to resolve record \"{}\" to a seat token.", recordUuid, e);
+            return null;
         }
 
     }

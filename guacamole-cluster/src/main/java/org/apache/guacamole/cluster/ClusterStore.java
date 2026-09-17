@@ -124,6 +124,19 @@ public interface ClusterStore {
     long countTunnels(GuacdEndpoint endpoint);
 
     /**
+     * Returns the seat token of the tunnel whose history record has the given
+     * UUID.
+     *
+     * @param recordUuid
+     *     The UUID of the connection history record.
+     *
+     * @return
+     *     The seat token identifying that tunnel's cluster state, or null if
+     *     no such tunnel is known or the store is unavailable.
+     */
+    String lookupSeatToken(String recordUuid);
+
+    /**
      * @return
      *     The identity of this replica, as recorded on every tunnel this
      *     replica owns. Used to decide whether a tunnel can be closed locally

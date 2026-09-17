@@ -684,7 +684,9 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
                             ? activeConnection.getSharingProfile().getIdentifier() : null,
                     activeConnection.getUser().getIdentifier(),
                     activeConnection.getUser().getRemoteHost(),
-                    activeConnection.getStartDate().getTime());
+                    activeConnection.getStartDate().getTime(),
+                    activeConnection.getUUID() != null
+                            ? activeConnection.getUUID().toString() : null);
 
             // Publishing is best-effort. A cluster that cannot be reached must
             // not cost the user their connection -- it degrades to a

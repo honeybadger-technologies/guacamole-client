@@ -36,12 +36,13 @@ public class TunnelRegistration {
     private final String username;
     private final String remoteHost;
     private final long startTime;
+    private final String recordUuid;
 
     public TunnelRegistration(String tunnelUuid, String nodeId,
             String guacdConnectionId, GuacdEndpoint endpoint,
             String connectionIdentifier, String groupIdentifier,
             String sharingProfileIdentifier, String username,
-            String remoteHost, long startTime) {
+            String remoteHost, long startTime, String recordUuid) {
         this.tunnelUuid = tunnelUuid;
         this.nodeId = nodeId;
         this.guacdConnectionId = guacdConnectionId;
@@ -52,6 +53,7 @@ public class TunnelRegistration {
         this.username = username;
         this.remoteHost = remoteHost;
         this.startTime = startTime;
+        this.recordUuid = recordUuid;
     }
 
     public String getTunnelUuid() { return tunnelUuid; }
@@ -64,5 +66,13 @@ public class TunnelRegistration {
     public String getUsername() { return username; }
     public String getRemoteHost() { return remoteHost; }
     public long getStartTime() { return startTime; }
+
+    /**
+     * @return
+     *     The UUID of this connection's history record, which is what the
+     *     administrative API uses to identify it, or null if no history record
+     *     was written.
+     */
+    public String getRecordUuid() { return recordUuid; }
 
 }
