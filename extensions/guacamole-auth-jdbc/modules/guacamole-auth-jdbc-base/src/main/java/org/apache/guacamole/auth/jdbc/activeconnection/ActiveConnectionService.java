@@ -208,8 +208,38 @@ public class ActiveConnectionService
 
             // Close connection if not already closed
             GuacamoleTunnel tunnel = activeConnection.getTunnel();
-            if (tunnel != null && tunnel.isOpen())
+            if (tunnel != null && tunnel.isOpen()) {
                 tunnel.close();
+                return;
+            }
+
+            // A session owned by another replica has no tunnel here. Ask every
+            // replica to close it, then wait for the cluster entry to go, so
+            // this call never reports success for a kill that did not land.
+            String seatToken = clusterStore.lookupSeatToken(identifier);
+            if (seatToken == null)
+                return;
+
+            clusterStore.requestKill(identifier);
+
+            long deadline = System.currentTimeMillis() + KILL_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+
+                if (!clusterStore.isTunnelLive(seatToken))
+                    return;
+
+                try {
+                    Thread.sleep(KILL_POLL_INTERVAL_MS);
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+
+            }
+
+            throw new GuacamoleServerException("The replica owning this "
+                    + "connection did not close it in time.");
 
         }
         else

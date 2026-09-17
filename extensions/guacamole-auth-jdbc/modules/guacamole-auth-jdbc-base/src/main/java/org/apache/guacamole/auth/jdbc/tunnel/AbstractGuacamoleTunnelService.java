@@ -50,6 +50,7 @@ import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.GuacamoleUpstreamException;
 import org.apache.guacamole.auth.jdbc.connection.ConnectionMapper;
 import org.apache.guacamole.cluster.ClusterHeartbeat;
+import org.apache.guacamole.cluster.ClusterKillHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.TunnelRegistration;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
@@ -757,6 +758,56 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
         // No preferred connections were found
         return identifiers;
 
+    }
+
+    /**
+     * Closes the tunnel with the given history record UUID, if this replica
+     * owns it.
+     *
+     * @param recordUuid
+     *     The UUID of the history record identifying the tunnel.
+     *
+     * @return
+     *     true if this replica owned the tunnel and closed it, false if the
+     *     tunnel is not here.
+     */
+    public boolean closeLocalTunnel(String recordUuid) {
+
+        ActiveConnectionRecord record = activeTunnels.get(recordUuid);
+        if (record == null)
+            return false;
+
+        GuacamoleTunnel tunnel = record.getTunnel();
+        if (tunnel == null || !tunnel.isOpen())
+            return false;
+
+        try {
+            tunnel.close();
+            return true;
+        }
+
+        catch (GuacamoleException e) {
+            logger.warn("Unable to close tunnel \"{}\" on behalf of the cluster.",
+                    recordUuid, e);
+            return false;
+        }
+
+    }
+
+    /**
+     * Subscribes this replica to cluster kill requests. Invoked by Guice once
+     * this service has been constructed and its dependencies injected.
+     */
+    @Inject
+    public void registerClusterKillHandler() {
+        clusterStore.onKillRequest(new ClusterKillHandler() {
+
+            @Override
+            public void killLocalTunnel(String recordUuid) {
+                closeLocalTunnel(recordUuid);
+            }
+
+        });
     }
 
     /**
