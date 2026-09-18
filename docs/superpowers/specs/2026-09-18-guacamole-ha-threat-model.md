@@ -63,6 +63,14 @@ load-bearing: P5a's tasks cite it.
 | C4 | Credentials and authenticated connections outlive the web application that opened them | 1 | Release cluster resources on undeploy | 5 |
 | C5 | A vulnerable dependency ships unnoticed — this fork adds Lettuce, Netty and Reactor, inside nested extension jars | supply chain | Scan dependencies and the image in CI, with a failing gate | 6 |
 | C6 | Anything in the namespace reads or writes the keyspace | 2 | NetworkPolicy, already written in `../deploy/redis-hardened.yaml`; verified as an abuse case | 7 |
+
+**C6 was measured and does not hold on the devqa cluster.** The NetworkPolicy
+exists and its spec is correct, but the VPC CNI node agent runs with
+`--enable-network-policy=false`, so the API server accepts the object and
+nothing enforces it -- a bystander pod connects to Redis. See
+`../deploy/README.md` §12.6. Until enforcement is enabled, authentication and
+the ACL are the only controls on trust boundary 2, and a NetworkPolicy visible
+in `kubectl get` must not be read as evidence of one.
 | C7 | An operator cannot tell whether any of the above are active | 3 | Startup states the security posture in one line, redacted | 2 |
 
 ### What an attacker gets at each level

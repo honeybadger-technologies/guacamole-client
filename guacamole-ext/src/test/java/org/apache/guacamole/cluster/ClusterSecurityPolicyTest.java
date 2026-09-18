@@ -62,8 +62,22 @@ public class ClusterSecurityPolicyTest {
     @Test
     public void insecureIsAllowedWhenExplicitlyOptedInto() throws Exception {
         String posture = ClusterSecurityPolicy.check("redis://redis:6379", true);
-        assertTrue(posture.contains("UNAUTHENTICATED"));
+        assertTrue(posture.contains("INSECURE"));
+        assertTrue(posture.contains("neither authenticated nor encrypted"));
         assertFalse(posture.contains("secret"));
+    }
+
+    @Test
+    public void thePostureNamesTheActualShortcoming() throws Exception {
+
+        // devqa's arrangement: authenticated, but no TLS. Reporting this as
+        // "UNAUTHENTICATED" would tell an operator something false
+        String posture = ClusterSecurityPolicy.check(
+                "redis://guacamole:secret@redis:6379", true);
+
+        assertTrue(posture.contains("not encrypted"), posture);
+        assertFalse(posture.contains("UNAUTHENTICATED"), posture);
+
     }
 
     @Test

@@ -812,3 +812,152 @@ Stated so a later phase's gap is not mistaken for a bug in this one:
 Sticky sessions are what make P1 correct in the meantime: every user stays on
 one replica, so the replica-local state above stays consistent for that user.
 Removing the affinity annotations from `ingress-sticky.yaml` breaks P1.
+
+## 12. Security control verification (P5a)
+
+Run against the `remote-access` namespace of the devqa EKS cluster on
+2026-09-18, with image `1.6.1-p5a` and the dedicated authenticated Redis from
+`redis-hardened.yaml`. Each case states what was expected before it was run.
+
+### 12.1 An insecure URI is refused — PASS
+
+`CLUSTER_REDIS_URI` is `redis://guacamole:<password>@redis:6379`: authenticated,
+but not encrypted. Deployed with `cluster-allow-insecure-redis` unset.
+
+```
+GuacamoleServerException: Refusing to hold cluster state in
+"redis://***@redis:6379": it is not encrypted. Since session identity is held
+in this keyspace, an open Redis exposes who is logged in and from where. Use a
+"rediss://user:password@host" URI, or set "cluster-allow-insecure-redis" to
+true to accept this deliberately.
+```
+
+The credential is redacted, the property that permits it is named, and the pod
+never became ready — so the rolling update **stalled and the two healthy
+replicas kept serving**. A refused configuration cannot replace a working
+deployment, which is a better outcome than the plan asked for.
+
+### 12.2 The opt-out works, and is loud — PASS
+
+With `CLUSTER_ALLOW_INSECURE_REDIS=true`, both replicas start and each logs, per
+store:
+
+```
+WARN: Cluster state is held in an INSECURE Redis (redis://***@redis:6379): it
+is not encrypted. Session identity in this keyspace is readable by anything
+that can reach the port. This was permitted by "cluster-allow-insecure-redis".
+```
+
+Two warnings per replica is correct, not duplication: the JDBC extension and the
+web application each hold a store, and each checks its own.
+
+### 12.3 The startup self-check passes the real ACL — PASS
+
+No `denied or failed` line appeared on either replica, so all eight probes
+succeeded against the deployed ACL — including `TIME`, whose absence is what
+made P4b's failure silent. This is the positive control for §12.4 below.
+
+### 12.4 A restrictive ACL is reported — NOT RUN
+
+Removing `+time` requires writing to the `guacamole-redis` Secret, which this
+session was not permitted to do. To run it:
+
+```bash
+kubectl --context devqa -n remote-access get secret guacamole-redis \
+    -o jsonpath='{.data.users\.acl}' | base64 -d > /tmp/acl.orig
+sed 's/ +time//' /tmp/acl.orig > /tmp/acl.broken
+kubectl --context devqa -n remote-access patch secret guacamole-redis --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/data/users.acl\",\"value\":\"$(base64 < /tmp/acl.broken)\"}]"
+kubectl --context devqa -n remote-access delete pod redis-0     # subPath mounts do not refresh
+kubectl --context devqa -n remote-access rollout restart deploy/guacamole
+```
+
+**Expected:** an ERROR naming `server clock (TIME)`, where the same
+misconfiguration previously produced three warnings that read like noise.
+Restore `/tmp/acl.orig` afterwards and confirm the ERROR disappears.
+
+### 12.5 The wrong password fails safely — NOT RUN
+
+Same reason: it needs a Secret write. **Expected: users can still log in and
+connect** — the cluster degrades to per-replica behaviour — **and** the
+self-check reports every operation denied. Both must hold at once; that is what
+distinguishes failing closed on *configuration* from failing closed on a
+*dependency*.
+
+### 12.6 The NetworkPolicy blocks a bystander — **FAIL**
+
+```bash
+kubectl --context devqa -n remote-access exec pytester -- python3 -c \
+  "import socket; s=socket.socket(); s.settimeout(5); s.connect(('redis',6379)); print('CONNECTED')"
+CONNECTED - not blocked
+```
+
+`networkpolicy/redis-guacamole-only` exists and its spec is correct: ingress on
+6379 from `app=guacamole` only. **It is not enforced.** The cluster's VPC CNI
+node agent runs with policy enforcement switched off:
+
+```bash
+kubectl --context devqa -n kube-system get ds aws-node \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="aws-eks-nodeagent")].args}'
+[..., "--enable-network-policy=false", ...]
+```
+
+So **C6 is inert on this cluster, and on any EKS cluster configured this way.**
+A NetworkPolicy that is accepted by the API server and enforced by nothing is
+the exact failure mode this phase exists to expose: the object's presence reads
+as protection in every review, and `kubectl get networkpolicy` shows it.
+
+This is cluster-level configuration, not application configuration, and it was
+deliberately **not** changed here — enabling enforcement cluster-wide affects
+every namespace. Until it is enabled, treat authentication and the ACL as the
+only controls on the Redis boundary, and record that in any environment that
+holds real session identity.
+
+### 12.7 Cluster resources on undeploy — PARTIAL
+
+Measured by counting established connections to 6379 from inside the Redis pod,
+which needs no Redis permission of its own:
+
+```bash
+kubectl --context devqa -n remote-access exec redis-0 -- sh -c \
+  'awk "NR>1 && \$4==\"01\" {split(\$2,l,\":\"); if (l[2]==\"18EB\") n++} END {print n+0}" /proc/net/tcp'
+```
+
+| State | Connections |
+|---|---|
+| 2 replicas, idle | 6 |
+| after `rollout restart` ×2 | 6, 6 |
+| after one login | 8 |
+| scaled to 1 replica | 3 |
+| back to 2 replicas | 6 |
+
+Three per replica at rest, scaling exactly with replica count and returning to
+it — no growth. **This does not prove the fix**, and saying so matters: a pod
+restart kills the JVM, which releases the connections whether or not
+`shutdown()` is called.
+
+The leak's actual failure mode is a Tomcat hot redeploy without a JVM restart,
+and **that cannot be reproduced in this image**: the container runs as non-root
+against a root-owned `ROOT.war`, so nothing in the pod can trigger a reload
+(`touch: Permission denied`). The honest conclusion is that this deployment
+shape cannot exhibit the leak, and the fix matters for deployment shapes that
+redeploy in place — plus the security reading, which holds regardless: a leaked
+client keeps an authenticated connection and the credential that opened it in
+the memory of a web application that is supposed to be gone.
+
+Note the count rose from 2 to 3 per replica between p4h and p5a. That is
+expected: `AuthenticationService` is now injected into the servlet listener so
+it can be shut down, which constructs it at startup rather than at first login,
+so the web application's store connects at boot.
+
+### 12.8 The application still works — PASS
+
+A login through the service under p5a, after all of the above:
+
+```
+LOGIN OK guacadmin token len 64
+```
+
+Worth asserting explicitly: the eager construction in §12.7 changes when the
+web application's store is built, and a store built at the wrong time would
+break every login rather than degrade.

@@ -87,8 +87,12 @@ public class ClusterSecurityPolicy {
                 RedisUris.redact(uri),
                 describeShortcoming(parseable, encrypted, authenticated));
 
-        return "Cluster state is held in an UNAUTHENTICATED or unencrypted Redis ("
-                + RedisUris.redact(uri) + ").";
+        // Name the actual shortcoming rather than a catch-all: an operator
+        // reading "UNAUTHENTICATED" about a Redis that is authenticated but
+        // unencrypted is being told something false
+        return "Cluster state is held in an INSECURE Redis ("
+                + RedisUris.redact(uri) + "): it is "
+                + describeShortcoming(parseable, encrypted, authenticated) + ".";
 
     }
 
