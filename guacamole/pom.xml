@@ -248,14 +248,6 @@
             <version>${revision}</version>
         </dependency>
 
-        <!-- Cluster coordination (session token store) -->
-        <dependency>
-            <groupId>org.apache.guacamole</groupId>
-            <artifactId>guacamole-cluster</artifactId>
-            <version>${revision}</version>
-            <scope>compile</scope>
-        </dependency>
-
         <!-- Guacamole JavaScript API -->
         <dependency>
             <groupId>org.apache.guacamole</groupId>

@@ -50,15 +50,6 @@
             <artifactId>guacamole-auth-jdbc-base</artifactId>
             <version>${revision}</version>
         </dependency>
-
-    
-        <!-- Cluster coordination (supplied by the web application) -->
-        <dependency>
-            <groupId>org.apache.guacamole</groupId>
-            <artifactId>guacamole-cluster</artifactId>
-            <version>${revision}</version>
-            <scope>provided</scope>
-        </dependency>
 </dependencies>
 
 </project>
