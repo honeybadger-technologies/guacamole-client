@@ -526,6 +526,131 @@ Verified afterwards: the built extension contains **0** Guice jars, and does con
 `guacamole-cluster-1.6.1.jar` and `lettuce-core-6.3.2.RELEASE.jar` among its 15
 nested jars.
 
+### 11. Auth token store and session recovery (P4b)
+
+Image `1.6.1-p4g`, two web-app replicas. The API was driven from an in-cluster
+pod. Startup names the store:
+
+```
+Session tokens will be shared across the cluster via "redis://redis:6379".
+A session will survive the loss of the replica it authenticated against.
+```
+
+**A token issued by one replica works on another.**
+
+```
+token issued by A -> use on A -> 200
+                     use on B -> 200
+```
+
+B logs `Session for user "guacadmin" rebuilt on this replica.` Before P4b, B
+returned 403: the token existed only in A's heap.
+
+**The store holds a hash, not the token, and no secret.**
+
+```
+token       F2652A4DBCF494DCFC1A...
+sha256      64ebcf7323e2a4ff6f0677fd0369ac4c6b3734d9bd1ef1e60a1932dfd6b802ed
+redis key   guac:token:64ebcf7323e2a4ff6f0677fd0369ac4c6b3734d9bd1ef1e60a1932dfd6b802ed
+```
+
+The hash contains `username`, `authProvider`, `remoteAddress`, `remoteHostname`
+and `authenticatedTime` -- no password and no permissions. Scanning the whole
+keyspace for the token string returns nothing.
+
+**The login survives the replica that issued it.** Authenticated against A, then
+deleted A's pod with `--grace-period=0`, then used the token on the survivor:
+
+```
+use on surviving replica B -> 200
+Session for user "guacadmin" rebuilt on this replica.
+```
+
+Tunnels A was hosting are gone, as designed. The login is not.
+
+**Logout is cluster-wide.**
+
+```
+use on B (rebuilds there) -> 200
+logout on A               -> 204
+use on B after logout     -> 403
+use on A after logout     -> 403
+```
+
+B's 403 is itself the proof the key was withdrawn from Redis: a rebuild only
+fails when the lookup returns nothing.
+
+**With clustering disabled the behaviour is upstream's.**
+
+```
+CLUSTER_ENABLED=false
+use on A -> 200
+use on B -> 403
+```
+
+and the startup banner is absent.
+
+#### Four findings, none of which a unit test could have caught
+
+All 147 tests passed throughout. Every defect below appeared only on a
+deployment, because each involves a classloader, a servlet container, or a
+second replica.
+
+**Cluster classes cannot be shared by copying them.** Adding `guacamole-cluster`
+to the web application put those classes in the WAR *and* in the nested jars
+every extension embeds, so the same name resolved to two `Class` objects:
+
+```
+IllegalArgumentException: argument type mismatch
+  at RedisSharedConnectionMap.registerRevocationHandler
+```
+
+Making the extensions take the module as `provided` moved the collision one
+level down, onto Guice itself:
+
+```
+Class org.apache.guacamole.cluster.ClusterModule does not implement
+the requested interface com.google.inject.Module
+```
+
+The cluster package now lives in `guacamole-ext`, which is in the WAR once and
+which every extension already takes as `provided`. `ClusterModule` moved to the
+JDBC extension instead -- it was the only one of the 22 classes touching Guice,
+and keeping it out is what lets the rest be shared.
+
+**Every provider is wrapped.** `AuthenticationProviderFacade` implements
+`AuthenticationProvider` and nothing else, so `instanceof
+RehydratableAuthenticationProvider` tested the wrapper and could never be true:
+
+```
+Session for user "guacadmin" will not be rebuilt:
+provider "postgresql" is not rehydratable.
+```
+
+The facade now implements the interface and denies on behalf of any provider
+that does not. Default-deny is preserved; it moves to a null return.
+
+**Credentials cannot be fabricated.** Its constructor copies the request into a
+`RequestDetails`, which dereferences it, so a null request throws. The rebuilt
+session now carries the request that triggered the rebuild, which is also the
+more accurate source.
+
+**A replica races its own logout broadcast.** Announcing the logout before
+removing the session locally let this replica's own subscriber remove it first,
+after which the local removal found nothing and returned "No such token" -- a
+404 for a logout that had succeeded. Separately, `RESTExceptionMapper` calls
+`destroyGuacamoleSession` for every unauthorized response, including ones with
+no token, so hashing unconditionally turned every 401 into a 500.
+
+#### Redis is now security-sensitive
+
+Before this phase Redis held routing and counting state. It now holds session
+identity, and a token hash plus a username is enough to tell an attacker who is
+logged in and from where. **Any deployment of the token store requires
+`requirepass` or ACL authentication and TLS, with the Guacamole user scoped to
+the `guac:` prefix.** The devqa Redis has neither. That is acceptable for a test
+namespace on a private cluster and is not acceptable anywhere else.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
