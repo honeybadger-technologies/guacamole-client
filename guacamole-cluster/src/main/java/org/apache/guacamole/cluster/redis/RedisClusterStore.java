@@ -37,6 +37,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.ClusterKillHandler;
+import org.apache.guacamole.cluster.ClusterShareRevocationHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
@@ -91,6 +92,18 @@ public class RedisClusterStore implements ClusterStore {
      * subscription commands.
      */
     private volatile StatefulRedisPubSubConnection<String, String> pubSubConnection;
+
+    /**
+     * Handler invoked when a kill is requested anywhere in the cluster, or null
+     * if this replica has not registered one.
+     */
+    private volatile ClusterKillHandler killHandler;
+
+    /**
+     * Handler invoked when a share key is revoked anywhere in the cluster, or
+     * null if this replica has not registered one.
+     */
+    private volatile ClusterShareRevocationHandler shareRevocationHandler;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
@@ -518,7 +531,27 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
-    public void onKillRequest(final ClusterKillHandler handler) {
+    public void onKillRequest(ClusterKillHandler handler) {
+        this.killHandler = handler;
+        subscribeIfNeeded();
+    }
+
+    @Override
+    public void onShareRevoked(ClusterShareRevocationHandler handler) {
+        this.shareRevocationHandler = handler;
+        subscribeIfNeeded();
+    }
+
+    /**
+     * Opens the single pub/sub connection this replica uses for every cluster
+     * message, subscribing to each channel. Both kills and share key
+     * revocations arrive here, dispatched by channel name, so registering a
+     * second handler does not open a second connection.
+     */
+    private synchronized void subscribeIfNeeded() {
+
+        if (pubSubConnection != null)
+            return;
 
         try {
 
@@ -527,30 +560,64 @@ public class RedisClusterStore implements ClusterStore {
             pubSub.addListener(new RedisPubSubAdapter<String, String>() {
 
                 @Override
-                public void message(String channel, String recordUuid) {
+                public void message(String channel, String payload) {
                     try {
-                        handler.killLocalTunnel(recordUuid);
+
+                        if (ClusterKeys.KILL_CHANNEL.equals(channel)) {
+                            ClusterKillHandler handler = killHandler;
+                            if (handler != null)
+                                handler.killLocalTunnel(payload);
+                        }
+
+                        else if (ClusterKeys.SHARE_REVOKE_CHANNEL.equals(channel)) {
+                            ClusterShareRevocationHandler handler = shareRevocationHandler;
+                            if (handler != null)
+                                handler.shareRevoked(payload);
+                        }
+
                     }
 
                     // A handler that throws must not kill the subscriber
                     catch (Throwable e) {
-                        logger.warn("Kill request for \"{}\" could not be handled.",
-                                recordUuid, e);
+                        logger.warn("Cluster message on \"{}\" could not be handled.",
+                                channel, e);
                     }
                 }
 
             });
 
-            pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL);
+            pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL,
+                    ClusterKeys.SHARE_REVOKE_CHANNEL);
             pubSubConnection = pubSub;
 
         }
 
-        // Without a subscription this replica simply never honours remote
-        // kills; it must still serve connections
+        // Without a subscription this replica simply never honours remote kills
+        // or revocations; it must still serve connections
         catch (RedisException e) {
-            logger.error("Unable to subscribe to cluster kill requests. Sessions "
-                    + "on this replica cannot be terminated from another one.", e);
+            logger.error("Unable to subscribe to cluster messages. Sessions on "
+                    + "this replica cannot be terminated from another one, and "
+                    + "share keys revoked elsewhere stay open here.", e);
+        }
+
+    }
+
+    @Override
+    public void publishShareRevocation(String shareKey) {
+
+        try {
+            commands().publish(ClusterKeys.SHARE_REVOKE_CHANNEL, shareKey);
+            available = true;
+        }
+
+        // The key is already gone from the cluster, so it can no longer be
+        // redeemed; only the closing of tunnels already opened from it is lost
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to announce revocation of a share key. Tunnels "
+                    + "opened from it on other replicas will survive until "
+                    + "their session ends.", e);
         }
 
     }

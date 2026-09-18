@@ -229,6 +229,27 @@ public interface ClusterStore {
      */
     void removeShareKey(String shareKey);
 
+    /**
+     * Registers the handler to be invoked when a share key is revoked anywhere
+     * in the cluster, so that tunnels opened from that key on this replica can
+     * be closed.
+     *
+     * @param handler
+     *     The handler to invoke on revocation.
+     */
+    void onShareRevoked(ClusterShareRevocationHandler handler);
+
+    /**
+     * Announces to every replica that the given share key has been revoked.
+     * Failure to announce is logged rather than thrown: the key is already
+     * unredeemable, and only the closing of tunnels already opened from it
+     * elsewhere is lost.
+     *
+     * @param shareKey
+     *     The share key which is no longer valid.
+     */
+    void publishShareRevocation(String shareKey);
+
     void shutdown();
 
 }

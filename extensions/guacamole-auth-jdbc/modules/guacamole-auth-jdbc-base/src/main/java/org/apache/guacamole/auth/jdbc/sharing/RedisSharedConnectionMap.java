@@ -32,6 +32,7 @@ import org.apache.guacamole.auth.jdbc.sharing.connection.SharedConnectionDefinit
 import org.apache.guacamole.auth.jdbc.sharingprofile.ModeledSharingProfile;
 import org.apache.guacamole.auth.jdbc.sharingprofile.SharingProfileMapper;
 import org.apache.guacamole.auth.jdbc.sharingprofile.SharingProfileModel;
+import org.apache.guacamole.cluster.ClusterShareRevocationHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SharedConnectionEntry;
 import org.apache.guacamole.protocol.GuacamoleConfiguration;
@@ -140,8 +141,27 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
     public SharedConnectionDefinition remove(String key) {
 
         clusterStore.removeShareKey(key);
+        clusterStore.publishShareRevocation(key);
         return local.remove(key);
 
+    }
+
+    /**
+     * Subscribes this replica to revocations issued elsewhere. Invoked by Guice
+     * once this map has been constructed.
+     */
+    @Inject
+    public void registerRevocationHandler() {
+        clusterStore.onShareRevoked(new ClusterShareRevocationHandler() {
+
+            @Override
+            public void shareRevoked(String shareKey) {
+                // Closes any tunnels registered against a definition this
+                // replica issued for the key
+                local.remove(shareKey);
+            }
+
+        });
     }
 
     /**

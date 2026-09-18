@@ -117,6 +117,16 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public void onShareRevoked(ClusterShareRevocationHandler handler) {
+        // Nothing to subscribe to when clustering is disabled
+    }
+
+    @Override
+    public void publishShareRevocation(String shareKey) {
+        // No other replica exists to announce to
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }

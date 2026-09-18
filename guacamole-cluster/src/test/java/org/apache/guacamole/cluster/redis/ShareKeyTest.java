@@ -19,6 +19,10 @@
 
 package org.apache.guacamole.cluster.redis;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.apache.guacamole.cluster.ClusterShareRevocationHandler;
 import org.apache.guacamole.cluster.SharedConnectionEntry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -29,6 +33,7 @@ import org.testcontainers.DockerClientFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ShareKeyTest {
 
@@ -96,6 +101,41 @@ public class ShareKeyTest {
         store.removeShareKey("key-3");
 
         assertNull(store.getShareKey("key-3"));
+
+    }
+
+    @Test
+    public void revocationReachesAnotherReplica() throws Exception {
+
+        RedisClusterStore other = new RedisClusterStore(RedisTestSupport.redisUri(),
+                STALE_WINDOW_MS, "node-2");
+
+        try {
+
+            final CountDownLatch revoked = new CountDownLatch(1);
+            final AtomicReference<String> seen = new AtomicReference<String>();
+
+            other.onShareRevoked(new ClusterShareRevocationHandler() {
+
+                @Override
+                public void shareRevoked(String shareKey) {
+                    seen.set(shareKey);
+                    revoked.countDown();
+                }
+
+            });
+
+            store.publishShareRevocation("key-revoked");
+
+            assertTrue(revoked.await(10, TimeUnit.SECONDS),
+                    "revocation never arrived");
+            assertEquals("key-revoked", seen.get());
+
+        }
+
+        finally {
+            other.shutdown();
+        }
 
     }
 
