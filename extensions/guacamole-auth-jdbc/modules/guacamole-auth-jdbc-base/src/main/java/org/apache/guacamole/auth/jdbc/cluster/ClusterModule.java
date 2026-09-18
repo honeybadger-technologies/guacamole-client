@@ -25,6 +25,7 @@ import org.apache.guacamole.cluster.ClusterProperties;
 import org.apache.guacamole.cluster.ClusterSecurityPolicy;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.NoOpClusterStore;
+import java.util.List;
 import java.util.UUID;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
@@ -149,6 +150,18 @@ public class ClusterModule extends AbstractModule {
                 heartbeat.start();
 
                 logger.info("Cluster coordination is ENABLED. {}", posture);
+
+                // Log at ERROR and continue rather than refusing to start: a
+                // permission problem is fixable without a redeploy, and
+                // refusing would turn a degraded cluster into an outage
+                List<String> denied = store.selfCheck();
+                if (!denied.isEmpty())
+                    logger.error("Cluster coordination is enabled but Redis "
+                            + "denied or failed {} of the operations it depends "
+                            + "on: {}. Clustering will appear to work while "
+                            + "silently falling back to per-replica behaviour. "
+                            + "See deploy/redis-acl.md for the required "
+                            + "permissions.", denied.size(), denied);
 
             }
             else {
