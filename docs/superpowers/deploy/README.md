@@ -721,11 +721,33 @@ log alone that the connection is encrypted. A URI the redactor cannot parse is
 reported as `(redacted)` rather than echoed, because an unrecognised shape is
 the one most likely to carry a credential in a form the parser did not expect.
 
-**One check still outstanding.** Lettuce logs connection details of its own at
-DEBUG. Before enabling authentication anywhere real, run once with
-`LOG_LEVEL=debug` against an authenticated Redis and grep the output for the
-password, to confirm the client does not print what this change stopped the
-application from printing.
+**Lettuce does not print the password either — measured, not assumed.** P4b
+stopped the application from printing the URI and left open whether the client
+printed it anyway. Answered on devqa, against the now-authenticated Redis:
+
+```bash
+kubectl --context devqa -n remote-access set env deploy/guacamole LOG_LEVEL=debug
+kubectl --context devqa -n remote-access rollout status deploy/guacamole
+PW=$(kubectl --context devqa -n remote-access get secret guacamole-redis \
+        -o jsonpath='{.data.password}' | base64 -d)
+kubectl --context devqa -n remote-access logs deploy/guacamole --all-containers --tail=-1 \
+    | grep -cF "$PW"
+kubectl --context devqa -n remote-access set env deploy/guacamole LOG_LEVEL-
+```
+
+**0 hits**, across 199 DEBUG lines of which 128 came from Lettuce or Netty — so
+the zero is a result rather than an absence of logging. Lettuce masks the
+credential in its own output:
+
+```
+DEBUG io.lettuce.core.RedisClient - Resolved SocketAddress redis/<unresolved>:6379
+    using redis://guacamole:****************************@redis?timeout=2s
+```
+
+The unit guard is `CredentialLeakTest`, which asserts the same of the exception
+path and of every startup self-check message — and asserts that the endpoint
+*does* appear in them, so the guard cannot pass merely because a message went
+empty.
 
 **Dedicated Redis, not the shared one.** `redis-hardened.yaml` deploys a
 single authenticated node with `maxmemory-policy noeviction`, persistence, an
