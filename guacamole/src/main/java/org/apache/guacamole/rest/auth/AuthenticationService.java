@@ -728,6 +728,10 @@ public class AuthenticationService {
             }
         }
 
+        // Every provider is wrapped in AuthenticationProviderFacade, which
+        // implements this interface and denies on behalf of any provider that
+        // does not. The check below therefore passes for all of them, and the
+        // real gate is a null return from rehydrate().
         if (!(authProvider instanceof RehydratableAuthenticationProvider)) {
             logger.debug("Session for user \"{}\" will not be rebuilt: provider "
                     + "\"{}\" is not rehydratable.", identity.getUsername(),
@@ -749,8 +753,12 @@ public class AuthenticationService {
                     ((RehydratableAuthenticationProvider) authProvider)
                             .rehydrate(identity.getUsername(), skeleton);
 
-            if (authenticatedUser == null)
+            if (authenticatedUser == null) {
+                logger.debug("Session for user \"{}\" will not be rebuilt: "
+                        + "provider \"{}\" declined.", identity.getUsername(),
+                        identity.getAuthProviderIdentifier());
                 return null;
+            }
 
             // Permissions are re-read here, so an account disabled or
             // de-permissioned since login is caught
