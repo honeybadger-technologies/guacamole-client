@@ -630,6 +630,46 @@ public class AuthenticationService {
     }
 
     /**
+     * Subscribes this replica to logouts issued elsewhere in the cluster.
+     * Invoked by Guice once this service has been constructed.
+     */
+    @Inject
+    public void registerLogoutHandler() {
+        clusterStore.onLogout(new ClusterLogoutHandler() {
+
+            @Override
+            public void loggedOut(String tokenHash) {
+                invalidateLocalSession(tokenHash);
+            }
+
+        });
+    }
+
+    /**
+     * Drops the session behind the given token hash, if this replica holds one.
+     *
+     * Without this, logging out on one replica would leave a fully usable
+     * session in another replica's local map until it timed out, which is a
+     * worse property than the single-node behaviour this started from.
+     *
+     * @param tokenHash
+     *     The hash of the token which has been logged out.
+     */
+    private void invalidateLocalSession(String tokenHash) {
+
+        String authToken = localTokensByHash.remove(tokenHash);
+        if (authToken == null)
+            return;
+
+        GuacamoleSession session = tokenSessionMap.remove(authToken);
+        if (session != null) {
+            session.invalidate();
+            logger.debug("Dropped a session logged out on another replica.");
+        }
+
+    }
+
+    /**
      * Publishes the identity behind a newly-issued token to the cluster, so
      * that the session can be rebuilt on another replica.
      *

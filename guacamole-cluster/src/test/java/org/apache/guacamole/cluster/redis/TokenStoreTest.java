@@ -19,6 +19,10 @@
 
 package org.apache.guacamole.cluster.redis;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.apache.guacamole.cluster.ClusterLogoutHandler;
 import org.apache.guacamole.cluster.TokenIdentity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -128,6 +132,40 @@ public class TokenStoreTest {
         store.touchToken("hash-5", 60);
         assertTrue(store.tokenTtlForTesting("hash-5") > 2,
                 "touch must extend the idle window");
+
+    }
+
+    @Test
+    public void logoutReachesAnotherReplica() throws Exception {
+
+        RedisClusterStore other = new RedisClusterStore(RedisTestSupport.redisUri(),
+                STALE_WINDOW_MS, "node-2");
+
+        try {
+
+            final CountDownLatch seen = new CountDownLatch(1);
+            final AtomicReference<String> hash = new AtomicReference<String>();
+
+            other.onLogout(new ClusterLogoutHandler() {
+
+                @Override
+                public void loggedOut(String tokenHash) {
+                    hash.set(tokenHash);
+                    seen.countDown();
+                }
+
+            });
+
+            store.publishLogout("hash-logged-out");
+
+            assertTrue(seen.await(10, TimeUnit.SECONDS), "logout never arrived");
+            assertEquals("hash-logged-out", hash.get());
+
+        }
+
+        finally {
+            other.shutdown();
+        }
 
     }
 
