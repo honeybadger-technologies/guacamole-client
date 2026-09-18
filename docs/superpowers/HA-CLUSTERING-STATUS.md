@@ -21,6 +21,7 @@ by its tests.
 | P3b | Share keys redeemable on any replica | One guacd connection, two users, one arriving from each replica |
 | P4a | Brute-force bans counted across replicas | 2 failures on A + 2 on B trips a limit of 4; a 5th on either is refused |
 | P4b | Session survives the loss of its replica | Replica force-deleted; token still returns 200 on the survivor |
+| P5a | Refuses an insecure Redis; reports a restrictive ACL | Refused pod never became ready, so the healthy replicas kept serving; self-check passed all 8 probes against the real ACL |
 
 Clustering is off by default. With `cluster-enabled=false` every patched path
 behaves as upstream, and each phase's verification includes that control.
@@ -129,11 +130,40 @@ matter most: `&guac:*` for channels, because kill, share revocation and logout
 are all pub/sub and a key-only pattern disables them silently; and denying
 `FLUSHALL`, which exists in the code solely for the test suite.
 
+## P5a, and the two things it found
+
+Security hardening is merged: a threat model naming controls C1-C7, a startup
+refusal of an unauthenticated or unencrypted Redis, a self-check that reports a
+restrictive ACL at ERROR instead of degrading silently, credential-leak guards,
+resource release on undeploy, and dependency plus image scanning in CI. Details
+in `plans/2026-09-18-guacamole-ha-p5a.md`; verification in `deploy/README.md`
+§12.
+
+Two findings came from running the controls rather than writing them:
+
+**The supply-chain gate was red on its first run, on a CVE that mattered.**
+`netty-handler` 4.1.107, pinned by Lettuce, carries CVE-2026-50010, a hostname
+verification bypass -- which would have undermined the TLS the same phase just
+made mandatory. Fixed by pinning `netty-bom` to 4.1.137, not suppressed.
+`mina-core` 2.2.7 (CVE-2026-47065, deserialization RCE) arrives through the LDAP
+extension and was patch-bumped for the same reason.
+
+**The NetworkPolicy is not enforced on devqa.** The object exists, its spec is
+correct, and the VPC CNI node agent runs with `--enable-network-policy=false`,
+so a bystander pod reaches Redis. C6 is inert until that changes, and a
+NetworkPolicy visible in `kubectl get` is not evidence of protection.
+
 ## Remaining
 
-- **P5**: Helm packaging, Prometheus metrics, TLS to Redis, and the
-  `ClusterModule` Lettuce-client leak on Tomcat redeploy. Sentinel leaves P5 if
-  a managed Redis with a stable primary endpoint is used instead.
+- **Two abuse cases unrun** -- a removed `+time` and a wrong password -- both
+  needing a write to the Redis Secret. Commands and expectations are in
+  `deploy/README.md` §12.4 and §12.5.
+- **P5b**: Prometheus metrics and deployment packaging. There is no chart to
+  author: `devops-k8s-infra/infra-aws/modules/addons/guacamole` is Terraform
+  wrapping `oci://ghcr.io/maximewewer/charts/guacamole`, so P5b extends that
+  module. Its `guacd_replicas > 1` guard predates P0/P1, and its `hpa_enabled`
+  path only became safe with P4b. Sentinel leaves P5 if a managed Redis with a
+  stable primary endpoint is used instead.
 - **Spec §7.3 scenarios 9 and 10** — clock skew, and cluster-wide ban counting
   under concurrency — were never executed.
 - **Lettuce's own DEBUG logging** has not been checked against an authenticated
