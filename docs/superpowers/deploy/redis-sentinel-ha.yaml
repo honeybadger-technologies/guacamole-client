@@ -1,0 +1,265 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# Redundant Redis for Guacamole: one primary, two replicas, three Sentinels.
+#
+# REDIS CLUSTER MODE IS NOT AN OPTION HERE, and the reason is in the code
+# rather than in taste:
+#
+#   1. RedisClusterStore builds a RedisClient, not a RedisClusterClient
+#      (RedisClusterStore.java:141), so it speaks to one node and does not
+#      follow MOVED redirects.
+#   2. acquireSeats passes one key per limit-bearing index to a single EVAL
+#      (RedisClusterStore.java:188-202). In cluster mode those keys hash to
+#      different slots and the script is rejected with CROSSSLOT.
+#
+# Sentinel needs no code change: Lettuce resolves the current primary from a
+# redis-sentinel:// URI, and the client reconnects to the new primary after a
+# failover on its own.
+#
+#   CLUSTER_REDIS_URI = redis-sentinel://guacamole:PASSWORD@redis-0.redis:26379,redis-1.redis:26379,redis-2.redis:26379/0#guacamole-primary
+#
+# Guacamole degrades rather than fails while Redis is unavailable -- limits
+# fall back to per-replica, and sessions stop being shareable across replicas
+# -- so this buys a shorter degraded window, not the difference between
+# working and not.
+#
+# VERIFY BEFORE RELYING ON IT: whether Lettuce applies the URI's credentials to
+# the Sentinels as well as to the primary. If it does not, either leave
+# Sentinel authentication off and rely on the NetworkPolicy below, or set
+# sentinel credentials explicitly, which needs a RedisURI builder and therefore
+# a code change.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-ha-config
+data:
+  redis.conf: |
+    port 6379
+    protected-mode yes
+    maxmemory 512mb
+    maxmemory-policy noeviction
+    appendonly yes
+    appendfsync everysec
+    dir /data
+    aclfile /etc/redis/users.acl
+
+    # Replicas authenticate to the primary as the replication user. A
+    # failover promotes a replica, so every node needs both halves.
+    masteruser replication
+    masterauth REPLACE_WITH_REPLICATION_PASSWORD
+
+    rename-command FLUSHALL ""
+    rename-command FLUSHDB ""
+
+  sentinel.conf: |
+    port 26379
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+
+    # 2 of 3 must agree before a failover, which is what stops a single
+    # partitioned Sentinel from promoting a replica on its own.
+    sentinel monitor guacamole-primary redis-0.redis 6379 2
+    sentinel down-after-milliseconds guacamole-primary 5000
+    sentinel failover-timeout guacamole-primary 30000
+    sentinel parallel-syncs guacamole-primary 1
+    sentinel auth-user guacamole-primary replication
+    sentinel auth-pass guacamole-primary REPLACE_WITH_REPLICATION_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis-ha
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+    - name: sentinel
+      port: 26379
+      targetPort: 26379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: redis-ha
+  template:
+    metadata:
+      labels:
+        app: redis-ha
+    spec:
+      nodeSelector:
+        nodegroup: spot
+        kubernetes.io/arch: arm64
+      tolerations:
+        - key: spot
+          value: "true"
+          effect: NoSchedule
+      # Three copies on one node is one node's worth of redundancy.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: redis-ha
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              cp /etc/redis-src/redis.conf /tmp/redis.conf
+              # Every pod but the first starts as a replica of pod 0. After the
+              # first failover Sentinel owns this relationship, and the
+              # replicaof line it rewrites lives in /data, not here.
+              if [ "${HOSTNAME##*-}" != "0" ]; then
+                echo "replicaof redis-0.redis 6379" >> /tmp/redis.conf
+              fi
+              exec redis-server /tmp/redis.conf
+          ports:
+            - containerPort: 6379
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: guacamole-redis
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis-src
+              readOnly: true
+            - name: acl
+              mountPath: /etc/redis/users.acl
+              subPath: users.acl
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli --user guacamole ping | grep -q PONG"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+        - name: sentinel
+          image: redis:7.4-alpine
+          command: ["sh", "-c"]
+          args:
+            # Sentinel rewrites its own configuration as the topology changes,
+            # so it needs a writable copy rather than the mounted one.
+            - |
+              cp /etc/redis-src/sentinel.conf /data/sentinel.conf
+              exec redis-sentinel /data/sentinel.conf
+          ports:
+            - containerPort: 26379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis-src
+              readOnly: true
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: redis-ha-config
+        - name: acl
+          secret:
+            secretName: guacamole-redis
+            items:
+              - key: users.acl
+                path: users.acl
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 8Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ha-guacamole-only
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-ha
+  policyTypes: ["Ingress"]
+  ingress:
+    # Guacamole reaches both the data port and the Sentinels, since the client
+    # asks Sentinel which node is currently primary.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: guacamole
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # Replication and Sentinel quorum traffic between the nodes themselves.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: redis-ha
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379

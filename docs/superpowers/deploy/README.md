@@ -701,6 +701,50 @@ DEBUG. Before enabling authentication anywhere real, run once with
 password, to confirm the client does not print what this change stopped the
 application from printing.
 
+**Dedicated Redis, not the shared one.** `redis-hardened.yaml` deploys a
+single authenticated node with `maxmemory-policy noeviction`, persistence, an
+ACL scoped to `guac:`, and a NetworkPolicy admitting only the Guacamole pods.
+`redis-acl.md` carries the ACL itself, how its command list was derived from
+the code, and the preflight checks to run if you point Guacamole at an existing
+Redis instead.
+
+Sharing an existing cache is the tempting option and the wrong one, for one
+reason that outranks the others: a cache runs an LRU eviction policy, and
+evicting a member of `guac:idx:*` or `guac:seat:*` corrupts concurrency limits
+and guacd routing **silently**. Nothing errors; the numbers are simply wrong
+from then on. Add that the ACL scoping only protects this keyspace if every
+other client is scoped too, and that `FLUSHALL` crosses logical databases, and
+a shared instance is carrying risks a dedicated pod removes for the cost of one
+container.
+
+**Redundancy means replication, not sharding.** `redis-sentinel-ha.yaml`
+deploys three nodes and three Sentinels. Redis Cluster mode cannot be used at
+all, for two reasons in the code rather than in preference:
+
+- `RedisClusterStore` builds a `RedisClient`, not a `RedisClusterClient`
+  (`RedisClusterStore.java:141`), so it talks to one node and does not follow
+  MOVED redirects.
+- `acquireSeats` passes one key per limit-bearing index to a single `EVAL`
+  (`RedisClusterStore.java:188-202`). In cluster mode those keys hash to
+  different slots, and the script is rejected with `CROSSSLOT`.
+
+Sentinel needs no code change, because Lettuce resolves the current primary
+from a `redis-sentinel://` URI and reconnects after a failover by itself:
+
+```
+CLUSTER_REDIS_URI = redis-sentinel://guacamole:PASSWORD@redis-0.redis:26379,\
+redis-1.redis:26379,redis-2.redis:26379/0#guacamole-primary
+```
+
+Two things to weigh before deploying it. Guacamole already degrades rather than
+fails while Redis is unreachable -- P2 verified that limits fall back to
+per-replica -- so Sentinel shortens a degraded window rather than preventing an
+outage. And whether Lettuce applies the URI's credentials to the Sentinels as
+well as to the primary is **unverified**; if it does not, either leave Sentinel
+authentication off behind the NetworkPolicy, or set sentinel credentials
+explicitly, which needs a `RedisURI` builder and therefore a code change.
+Neither manifest has been deployed yet; both pass `kubectl --dry-run=client`.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:

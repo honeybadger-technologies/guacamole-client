@@ -1,0 +1,197 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# A dedicated, authenticated Redis for Guacamole cluster state.
+#
+# Dedicated rather than shared because the two requirements conflict with a
+# cache's: this keyspace must never be evicted, and the ACL that scopes
+# Guacamole to "guac:" only protects Guacamole's own keys if every other
+# client is scoped too. A FLUSHALL run against a shared cache would drop
+# every session, every seat and every route.
+#
+# Apply before the Guacamole deployment. Replace the password first:
+#
+#   kubectl -n remote-access create secret generic guacamole-redis \
+#       --from-literal=password='<a long random password>' \
+#       --from-literal=uri='redis://guacamole:<same password>@redis:6379'
+#
+# The URI is what Guacamole reads as CLUSTER_REDIS_URI. Keep the two in step.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  redis.conf: |
+    port 6379
+    protected-mode yes
+
+    # Cluster state must never be evicted. Losing one member of guac:idx:* or
+    # guac:seat:* silently corrupts concurrency limits and guacd routing;
+    # losing a guac:token:* entry logs a user out. An LRU policy turns a
+    # memory-pressure nuisance into a correctness failure, which is why this
+    # Redis cannot be a cache as well.
+    maxmemory 512mb
+    maxmemory-policy noeviction
+
+    # Everything here except the token store rebuilds itself from the
+    # heartbeat within one stale window. Sessions do not, so a restart
+    # without persistence logs every user out.
+    appendonly yes
+    appendfsync everysec
+    dir /data
+
+    # Authentication and authorisation come from the ACL file, which is
+    # mounted from the same Secret as the password.
+    aclfile /etc/redis/users.acl
+
+    # Names that make an accidental flush or shutdown harder to issue by
+    # hand. The ACL already denies them to Guacamole; this also covers
+    # anyone who reaches the port with another credential.
+    rename-command FLUSHALL ""
+    rename-command FLUSHDB ""
+    rename-command CONFIG ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      nodeSelector:
+        nodegroup: spot
+        kubernetes.io/arch: arm64
+      tolerations:
+        - key: spot
+          value: "true"
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args: ["/etc/redis/redis.conf"]
+          ports:
+            - containerPort: 6379
+          env:
+            # REDISCLI_AUTH keeps the password out of the process list, where
+            # "redis-cli -a" would put it for every probe, every few seconds.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: guacamole-redis
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis/redis.conf
+              subPath: redis.conf
+              readOnly: true
+            - name: acl
+              mountPath: /etc/redis/users.acl
+              subPath: users.acl
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli --user guacamole ping | grep -q PONG"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli --user guacamole ping | grep -q PONG"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+        - name: acl
+          secret:
+            secretName: guacamole-redis
+            items:
+              - key: users.acl
+                path: users.acl
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 8Gi
+---
+# Only Guacamole may reach Redis. This is worth applying even before
+# authentication exists: it removes "anything in the namespace can read who is
+# logged in", which is the realistic exposure on a shared cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-guacamole-only
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: guacamole
+      ports:
+        - protocol: TCP
+          port: 6379
