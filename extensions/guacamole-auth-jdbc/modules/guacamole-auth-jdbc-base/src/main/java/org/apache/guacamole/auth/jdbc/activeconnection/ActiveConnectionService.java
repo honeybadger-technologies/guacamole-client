@@ -21,6 +21,14 @@ package org.apache.guacamole.auth.jdbc.activeconnection;
 
 import com.google.inject.Inject;
 import com.google.inject.Provider;
+import java.util.Date;
+import org.apache.guacamole.GuacamoleServerException;
+import org.apache.guacamole.cluster.ClusterStore;
+import org.apache.guacamole.cluster.TunnelRegistration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.guacamole.auth.jdbc.connection.ConnectionService;
+import org.apache.guacamole.auth.jdbc.connection.ModeledConnection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -45,6 +53,11 @@ public class ActiveConnectionService
     implements DirectoryObjectService<TrackedActiveConnection, ActiveConnection> { 
 
     /**
+     * Logger for this class.
+     */
+    private static final Logger logger = LoggerFactory.getLogger(ActiveConnectionService.class);
+
+    /**
      * Service for creating and tracking tunnels.
      */
     @Inject
@@ -55,6 +68,85 @@ public class ActiveConnectionService
      */
     @Inject
     private Provider<TrackedActiveConnection> trackedActiveConnectionProvider;
+
+    /**
+     * Cluster-wide view of active tunnels. Empty when clustering is disabled,
+     * in which case this service behaves exactly as upstream.
+     */
+    @Inject
+    private ClusterStore clusterStore;
+
+    /**
+     * Used to load the connection behind a session owned by another replica.
+     * The database is shared by every replica, so the connection is available
+     * locally even when the session is not.
+     */
+    @Inject
+    private ConnectionService connectionService;
+
+    /**
+     * Milliseconds to wait for another replica to honour a kill request.
+     */
+    private static final long KILL_TIMEOUT_MS = 2000L;
+
+    /**
+     * Milliseconds between checks for the cluster entry disappearing.
+     */
+    private static final long KILL_POLL_INTERVAL_MS = 100L;
+
+    /**
+     * Builds an administrative view of a session owned by another replica.
+     *
+     * @param user
+     *     The user requesting the listing.
+     *
+     * @param registration
+     *     The remote tunnel, as published to the cluster.
+     *
+     * @param hasPrivilegedAccess
+     *     Whether sensitive fields should be populated.
+     *
+     * @return
+     *     A tracked connection describing the remote session, with no tunnel.
+     */
+    private TrackedActiveConnection remoteActiveConnection(ModeledAuthenticatedUser user,
+            TunnelRegistration registration, boolean hasPrivilegedAccess) {
+
+        TrackedActiveConnection activeConnection = trackedActiveConnectionProvider.get();
+        activeConnection.init(user, null, false, false);
+
+        activeConnection.setIdentifier(registration.getRecordUuid());
+        activeConnection.setSharingProfileIdentifier(registration.getSharingProfileIdentifier());
+
+        // getConnectionIdentifier() reads through to the connection, and
+        // setConnectionIdentifier() deliberately throws, so the real connection
+        // has to be supplied. It is in the shared database regardless of which
+        // replica owns the session.
+        try {
+            activeConnection.setConnection(
+                    connectionService.retrieveObject(user,
+                            registration.getConnectionIdentifier()));
+        }
+        catch (GuacamoleException e) {
+            logger.debug("Connection \"{}\" behind a remote session could not "
+                    + "be read; it will be listed without connection detail.",
+                    registration.getConnectionIdentifier(), e);
+        }
+        activeConnection.setStartDate(new Date(registration.getStartTime()));
+
+        // A session on another replica cannot be joined from here -- that needs
+        // the share-key work in P3b -- so it is never marked connectable, and
+        // its tunnel stays null
+        activeConnection.setTunnel(null);
+
+        if (hasPrivilegedAccess) {
+            activeConnection.setUsername(registration.getUsername());
+            activeConnection.setRemoteHost(registration.getRemoteHost());
+        }
+
+        return activeConnection;
+
+    }
     
     @Override
     public TrackedActiveConnection retrieveObject(ModeledAuthenticatedUser user,
@@ -106,6 +198,30 @@ public class ActiveConnectionService
 
         }
 
+        // Add sessions owned by other replicas, skipping any already covered
+        // by a local record
+        Set<String> localIdentifiers = new HashSet<String>();
+        for (TrackedActiveConnection local : activeConnections)
+            localIdentifiers.add(local.getIdentifier());
+
+        for (TunnelRegistration registration : clusterStore.listTunnels()) {
+
+            String recordUuid = registration.getRecordUuid();
+            if (recordUuid == null || localIdentifiers.contains(recordUuid))
+                continue;
+
+            if (!identifierSet.contains(recordUuid))
+                continue;
+
+            boolean hasPrivilegedAccess =
+                    isPrivileged || username.equals(registration.getUsername());
+
+            if (hasPrivilegedAccess)
+                activeConnections.add(
+                        remoteActiveConnection(user, registration, hasPrivilegedAccess));
+
+        }
+
         return activeConnections;
         
     }
@@ -123,8 +239,38 @@ public class ActiveConnectionService
 
             // Close connection if not already closed
             GuacamoleTunnel tunnel = activeConnection.getTunnel();
-            if (tunnel != null && tunnel.isOpen())
+            if (tunnel != null && tunnel.isOpen()) {
                 tunnel.close();
+                return;
+            }
+
+            // A session owned by another replica has no tunnel here. Ask every
+            // replica to close it, then wait for the cluster entry to go, so
+            // this call never reports success for a kill that did not land.
+            String seatToken = clusterStore.lookupSeatToken(identifier);
+            if (seatToken == null)
+                return;
+
+            clusterStore.requestKill(identifier);
+
+            long deadline = System.currentTimeMillis() + KILL_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+
+                if (!clusterStore.isTunnelLive(seatToken))
+                    return;
+
+                try {
+                    Thread.sleep(KILL_POLL_INTERVAL_MS);
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+
+            }
+
+            throw new GuacamoleServerException("The replica owning this "
+                    + "connection did not close it in time.");
 
         }
         else
@@ -143,6 +289,20 @@ public class ActiveConnectionService
         Set<String> identifiers = new HashSet<String>(records.size());
         for (ActiveConnectionRecord record : records)
             identifiers.add(record.getUUID().toString());
+
+        // Include sessions owned by other replicas. Privileged users see the
+        // whole cluster; unprivileged users see only their own. A locally-owned
+        // session appears in both sources and is collapsed by the Set.
+        for (TunnelRegistration registration : clusterStore.listTunnels()) {
+
+            if (registration.getRecordUuid() == null)
+                continue;
+
+            if (user.isPrivileged()
+                    || user.getIdentifier().equals(registration.getUsername()))
+                identifiers.add(registration.getRecordUuid());
+
+        }
 
         return identifiers;
         

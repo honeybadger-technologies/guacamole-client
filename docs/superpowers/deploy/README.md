@@ -229,11 +229,14 @@ zcount guac:idx:guacd:<endpoint> (cutoff +inf -> 0     (not counted as live)
 
 Correctness is unaffected: `countTunnels` filters by score, so a dead member is
 never counted and never influences selection. But nothing physically removes it.
-The only pruning is the `ZREMRANGEBYSCORE` inside the seat script, and **the seat
-script is not wired up until P2** — so in a P1-only deployment these tombstones
-accumulate, one per tunnel lost to an ungraceful replica death. Gracefully closed
-tunnels are removed properly by `unregisterTunnel`, so this grows with crashes,
-not with traffic. Worth a P2 note rather than a P1 fix.
+The only pruning is the `ZREMRANGEBYSCORE` inside the seat script. Gracefully
+closed tunnels are removed properly by `unregisterTunnel`, so this grows with
+crashes, not with traffic.
+
+**As of P2 the seat script runs on every acquire**, and its `ZREMRANGEBYSCORE`
+removes these tombstones — see `SeatPruningTest`. A connection index that is
+never acquired again still keeps its tombstones, which is harmless: nothing reads
+it, and `countTunnels` filters by score regardless.
 
 ### 6. Autoscaling
 
@@ -258,6 +261,191 @@ but an HPA cannot read it without a custom metrics adapter. Scaling on that
 number directly (KEDA's Redis scaler, or a prometheus-adapter external metric)
 would be strictly better, and belongs with the P5 hardening work rather than here.
 
+### 7. Cluster-wide concurrency limits (P2)
+
+**Measured on devqa, 2026-09-17**, two replicas, one connection with
+`max-connections=1`.
+
+**The limit holds across replicas.** This is the defect P2 exists to prevent, and
+it cannot be reproduced in a single JVM:
+
+```
+replica A  POST /tunnel?connect  ->  200  (tunnel opened)
+replica B  POST /tunnel?connect  ->  409  "Cannot connect. This connection is in use."
+redis      zcard guac:idx:conn:<id>  ->  1
+```
+
+Closing the session on A frees the seat cluster-wide; B's retry then succeeds.
+
+**A Redis outage degrades, it does not block.** With Redis scaled to zero, both
+replicas grant the same connection — per-replica enforcement, which is exactly
+upstream behaviour:
+
+```
+replica A -> 200 in 0.27s
+replica B -> 200 in 0.16s
+ERROR: Cluster seat acquisition failed for connection "<id>".
+       Concurrency limits are now enforced per replica only.
+```
+
+**Redis returning needs no restart.** After scaling Redis back up and waiting out
+the 10 s re-probe window, the cluster-wide limit is enforced again — A `200`,
+B `409` — with the same pods still running.
+
+#### Three defects this test found, all inherited from P1
+
+Every one of them was invisible until the degraded path was exercised deliberately,
+and all three made a Redis outage into a connection outage:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| First connect after Redis died hung **over 180 s** | Lettuce buffers commands while disconnected and waits out a long timeout, so the first caller absorbs all of it | Reject commands while disconnected; 2 s command timeout |
+| Connections then failed `500 Unable to register tunnel with cluster` | `registerTunnel` was called unguarded on the connect path | Publication is best-effort; the connection survives, only its cluster visibility is lost |
+| A replica **started** during an outage came up dead — no authentication at all | `RedisClusterStore` connected in its constructor; Lettuce throws a `RuntimeException`, which `ClusterModule` does not catch, so Guice could not build the injector and the whole JDBC auth provider failed to load | Connect lazily on first use; re-probe every 10 s |
+
+The last one is worth dwelling on: the symptom was
+`Authentication attempt ignored because the relevant authentication provider could
+not be loaded`, which names neither Redis nor clustering. It only appeared because
+pods happened to restart while Redis was down.
+
+### 8. Cluster-wide listing and kill (P3a)
+
+**Measured on devqa, 2026-09-17**, two replicas.
+
+**A session is visible from the replica that does not own it.** Opened on
+replica A, then read from replica B:
+
+```
+A  /api/session/data/postgresql/activeConnections -> {"f91a88a4-...": {...}}
+B  /api/session/data/postgresql/activeConnections -> {"f91a88a4-...": {..., "connectable": false}}
+```
+
+The same identifier, connection, start date, remote host and username. Before
+P3a, B returned `{}` — that is the measurement recorded in section 2, and this
+is what changed it. `connectable` is deliberately false: a remote session is
+visible and killable, but not joinable until P3b.
+
+**It can be killed from the replica that does not own it.** `DELETE` issued to
+B returned **204 in 0.138 s**, after which both replicas listed `{}`. The logs
+show the round trip:
+
+```
+13:14:23.037  replica B  successfully deleted active connection "f91a88a4-..."
+13:14:23.041  replica A  HTTP tunnel request rejected: No such tunnel.
+```
+
+B published the request and A closed its tunnel 4 ms later, at which point A's
+held reader failed. The kill crossed replicas rather than B silently doing
+nothing.
+
+**Clustering disabled is unchanged from upstream.** With `CLUSTER_ENABLED=false`
+and a session open on A, A lists it and B lists `{}` — the replica-local view
+upstream produces.
+
+#### Two findings
+
+**The spec was wrong about `TrackedActiveConnection`.** §4.5 states it "exposes
+plain setters for every field the UI needs". `setConnectionIdentifier` instead
+throws `UnsupportedOperationException`, and `getConnectionIdentifier()` reads
+through to the connection object — so a remote entry failed with *"Unexpected
+internal error: The connection identifier of TrackedActiveConnection is
+inherited from the underlying connection"* and would have failed on
+serialisation even without calling the setter. The connection is loaded from the
+database instead, which every replica shares.
+
+**A remote kill during a Redis outage returns 404, not a timeout.** The bounded
+two-second wait is reached only when the session was listed and Redis died
+before the kill. Otherwise `deleteObject` calls `retrieveObject` first, the
+outage makes the remote session invisible, and the request 404s in ~0.025 s.
+That is honest — it never reports success — but it is not the path the plan
+predicted, and the timeout is a narrower race than it first appears.
+
+### 9. Cross-replica share keys (P3b)
+
+Image `1.6.1-p3e`, two web-app replicas, two guacd. A is `10.1.72.224`, B is
+`10.1.70.166`. The API was driven from an in-cluster pod; the connection is an
+SSH session against `ssh-target`, with a read-only sharing profile on it.
+
+A share key minted on A and redeemed on B:
+
+```
+share key:              deNHDAQ_N7QRW8P9YOWyD5YIcwtstjBSb8rCJmXGpIXT
+auth on B:              {"dataSource": "postgresql-shared", ...}
+shared directory on B:  {"deNHDAQ...":{"name":"share-test","protocol":"ssh",
+                          "attributes":{"jdbc-shared-by":"guacadmin"}}}
+```
+
+Before P3b that POST returned `INVALID_CREDENTIALS` on B, because the key lived
+only in A's heap. The connection name and the sharing user are answered from the
+definition's own fields, rebuilt from the Redis hash plus the shared database —
+no record of the session exists anywhere on B.
+
+**The join lands on the session, not on a new desktop.** Both users appear on one
+guacd connection, one arriving from each replica:
+
+```
+guacd: User "@118689c4-..." joined connection "$68ab07a1-..." (1 users now present)
+guacd: Joining existing connection "$68ab07a1-..."
+guacd: User "@dae06d14-..." joined connection "$68ab07a1-..." (2 users now present)
+```
+
+`guac:share:<key>` carries five fields — `seatToken`, `guacdConnectionId`,
+`connIdentifier`, `sharingProfileId`, `sharedBy` — and one `guac:route:` entry
+covers both tunnels.
+
+**Revocation.** Killing the shared session from B returned 204 in 0.062 s. The
+share key disappeared from Redis immediately (`exists` → 0), and the key was then
+refused on **both** replicas.
+
+#### Three findings, two of them defects older than this phase
+
+**Joining a shared connection crashed as soon as clustering was on.** The share
+key path never minted a cluster seat token, so its `TunnelRegistration` was keyed
+on null:
+
+```
+java.lang.NullPointerException
+  ConcurrentHashMap.putVal(ConcurrentHashMap.java:1011)
+  ClusterHeartbeat.add(ClusterHeartbeat.java:73)
+  AbstractGuacamoleTunnelService.assignGuacamoleTunnel(...:698)
+  SharedConnection.connect(SharedConnection.java:134)
+```
+
+This is a P2 defect. The two primary connect paths mint a token; this third one
+was missed, and no clustered deployment had exercised sharing until now. The join
+now gets a token without acquiring a seat — it joins a session that already holds
+one — and cleanup withdraws registrations for joins as well as primaries.
+
+**Every share-key join failed closed when clustering was off.**
+`selectGuacdEndpoint` routes a join through the cluster route table and fails
+closed when no route exists, which is right while clustering is on. With
+`cluster-enabled=false` the bound store is `NoOpClusterStore`, whose
+`lookupRoute` always returns null, so the same guard rejected every join with a
+404. Since `cluster-enabled` defaults to false, this broke sharing for anyone
+running this fork unclustered — present since P1.
+
+Isolated by A/B on the same config and script: `1.6.1-p3d` failed 2 of 2 runs,
+`1.6.1-p3e` passed 2 of 2. The join branch is now taken only when the store
+really coordinates a cluster.
+
+**Driving the HTTP tunnel by hand has four traps**, all of which produced
+misleading failures before being understood:
+
+- `key` is a query parameter, but the POST still needs
+  `Content-Type: application/x-www-form-urlencoded`, or Jersey throws on
+  `@FormParam`.
+- `sync` carries two arguments (`4.sync,7.9636167,1.0;`); the ack must echo only
+  the timestamp.
+- The read response is a stream. Waiting for the whole body means the ack is
+  never sent and guacd kills the client with status 776 (CLIENT_TIMEOUT), logged
+  as *"User is not responding"*.
+- `HTTPResponse.read(n)` blocks until n bytes arrive. A sync is ~20 bytes, so
+  `read(512)` lagged the ack by ~25 s. `read1()` fixes it.
+
+**The devqa Postgres is on an `emptyDir`.** Every connection defined in earlier
+phases was gone after a pod restart; only the schema-seeded `guacadmin` user
+survives. Reseed before testing.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
@@ -273,9 +461,6 @@ Stated so a later phase's gap is not mistaken for a bug in this one:
 - **Auth tokens are still replica-local**, so a replica death forces re-login.
   That is P4.
 - **Brute-force ban counts are still per-replica.** That is P4.
-- **Dead index members are never pruned**, because the only pruner is the seat
-  script and that is P2. See section 5 — harmless to correctness, unbounded over
-  a long-lived P1-only deployment.
 
 Sticky sessions are what make P1 correct in the meantime: every user stays on
 one replica, so the replica-local state above stays consistent for that user.

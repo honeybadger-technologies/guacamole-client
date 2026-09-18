@@ -34,6 +34,16 @@ public final class ClusterKeys {
      */
     public static final String ALL_INDEX = "guac:idx:all";
 
+    /**
+     * Channel on which kill requests are published.
+     */
+    public static final String KILL_CHANNEL = "guac:kill";
+
+    /**
+     * Channel on which share key revocations are published.
+     */
+    public static final String SHARE_REVOKE_CHANNEL = "guac:share:revoke";
+
     private ClusterKeys() {}
 
     /**
@@ -80,8 +90,16 @@ public final class ClusterKeys {
         return "guac:tunnel:" + escape(tunnelUuid);
     }
 
+    public static String record(String recordUuid) {
+        return "guac:record:" + escape(recordUuid);
+    }
+
     public static String route(String guacdConnectionId) {
         return "guac:route:" + escape(guacdConnectionId);
+    }
+
+    public static String shareKey(String shareKey) {
+        return "guac:share:" + escape(shareKey);
     }
 
 }

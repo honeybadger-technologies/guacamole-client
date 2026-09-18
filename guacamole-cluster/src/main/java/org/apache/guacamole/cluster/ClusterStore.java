@@ -124,6 +124,30 @@ public interface ClusterStore {
     long countTunnels(GuacdEndpoint endpoint);
 
     /**
+     * Returns every tunnel currently live anywhere in the cluster, including
+     * those owned by this replica.
+     *
+     * @return
+     *     Every live tunnel, or an empty collection if the store is
+     *     unavailable. Never null -- the administrative view degrades to a
+     *     replica-local listing rather than failing.
+     */
+    Collection<TunnelRegistration> listTunnels();
+
+    /**
+     * Returns the seat token of the tunnel whose history record has the given
+     * UUID.
+     *
+     * @param recordUuid
+     *     The UUID of the connection history record.
+     *
+     * @return
+     *     The seat token identifying that tunnel's cluster state, or null if
+     *     no such tunnel is known or the store is unavailable.
+     */
+    String lookupSeatToken(String recordUuid);
+
+    /**
      * @return
      *     The identity of this replica, as recorded on every tunnel this
      *     replica owns. Used to decide whether a tunnel can be closed locally
@@ -136,11 +160,108 @@ public interface ClusterStore {
      *     true if the backing store was reachable as of the most recent
      *     operation, false if callers should degrade to replica-local behavior.
      */
+    /**
+     * Returns whether this store actually coordinates a cluster. A no-op store
+     * answers false, which is how callers know that cluster-only routing (such
+     * as the join route table) does not apply and upstream behaviour should be
+     * used instead.
+     *
+     * @return
+     *     true if cluster state is really being shared, false if clustering is
+     *     disabled.
+     */
+    boolean isClustered();
+
     boolean isAvailable();
+
+    /**
+     * Registers the handler invoked when any replica requests a kill.
+     *
+     * @param handler
+     *     The handler to invoke for every kill request received.
+     */
+    void onKillRequest(ClusterKillHandler handler);
+
+    /**
+     * Asks every replica to close the tunnel with the given history record
+     * UUID. Only the owning replica will act.
+     *
+     * @param recordUuid
+     *     The UUID of the history record identifying the tunnel to close.
+     *
+     * @throws GuacamoleException
+     *     If the request cannot be published.
+     */
+    void requestKill(String recordUuid) throws GuacamoleException;
+
+    /**
+     * @param seatToken
+     *     The seat token identifying a tunnel.
+     *
+     * @return
+     *     true if that tunnel is still published to the cluster, false if it
+     *     has gone or the store is unavailable.
+     */
+    boolean isTunnelLive(String seatToken);
 
     /**
      * Releases all resources held by this store.
      */
+    /**
+     * Publishes the given share key to the cluster, so that it can be redeemed
+     * on any replica. Failure to publish is logged rather than thrown: the key
+     * then works only on the replica which issued it.
+     *
+     * @param shareKey
+     *     The share key being issued.
+     *
+     * @param entry
+     *     Everything that key resolves to.
+     */
+    void putShareKey(String shareKey, SharedConnectionEntry entry);
+
+    /**
+     * Returns everything the given share key resolves to.
+     *
+     * @param shareKey
+     *     The share key being redeemed.
+     *
+     * @return
+     *     The cluster state behind the given share key, or null if the key is
+     *     unknown or cannot be read.
+     */
+    SharedConnectionEntry getShareKey(String shareKey);
+
+    /**
+     * Removes the given share key from the cluster, so that it can no longer
+     * be redeemed anywhere.
+     *
+     * @param shareKey
+     *     The share key being removed.
+     */
+    void removeShareKey(String shareKey);
+
+    /**
+     * Registers the handler to be invoked when a share key is revoked anywhere
+     * in the cluster, so that tunnels opened from that key on this replica can
+     * be closed.
+     *
+     * @param handler
+     *     The handler to invoke on revocation.
+     */
+    void onShareRevoked(ClusterShareRevocationHandler handler);
+
+    /**
+     * Announces to every replica that the given share key has been revoked.
+     * Failure to announce is logged rather than thrown: the key is already
+     * unredeemable, and only the closing of tunnels already opened from it
+     * elsewhere is lost.
+     *
+     * @param shareKey
+     *     The share key which is no longer valid.
+     */
+    void publishShareRevocation(String shareKey);
+
     void shutdown();
 
 }
