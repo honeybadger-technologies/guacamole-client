@@ -195,6 +195,40 @@ public interface ClusterStore {
     /**
      * Releases all resources held by this store.
      */
+    /**
+     * Publishes the given share key to the cluster, so that it can be redeemed
+     * on any replica. Failure to publish is logged rather than thrown: the key
+     * then works only on the replica which issued it.
+     *
+     * @param shareKey
+     *     The share key being issued.
+     *
+     * @param entry
+     *     Everything that key resolves to.
+     */
+    void putShareKey(String shareKey, SharedConnectionEntry entry);
+
+    /**
+     * Returns everything the given share key resolves to.
+     *
+     * @param shareKey
+     *     The share key being redeemed.
+     *
+     * @return
+     *     The cluster state behind the given share key, or null if the key is
+     *     unknown or cannot be read.
+     */
+    SharedConnectionEntry getShareKey(String shareKey);
+
+    /**
+     * Removes the given share key from the cluster, so that it can no longer
+     * be redeemed anywhere.
+     *
+     * @param shareKey
+     *     The share key being removed.
+     */
+    void removeShareKey(String shareKey);
+
     void shutdown();
 
 }

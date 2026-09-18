@@ -41,6 +41,7 @@ import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
 import org.apache.guacamole.cluster.SeatResult;
+import org.apache.guacamole.cluster.SharedConnectionEntry;
 import org.apache.guacamole.cluster.TunnelRegistration;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 import org.slf4j.Logger;
@@ -588,6 +589,90 @@ public class RedisClusterStore implements ClusterStore {
             return true;
         }
 
+    }
+
+    @Override
+    public void putShareKey(String shareKey, SharedConnectionEntry entry) {
+
+        try {
+
+            Map<String, String> record = new HashMap<String, String>();
+            record.put("seatToken", entry.getSeatToken());
+            record.put("guacdConnectionId", entry.getGuacdConnectionId());
+            record.put("connIdentifier", entry.getConnectionIdentifier());
+            record.put("sharedBy", entry.getSharedBy());
+
+            if (entry.getSharingProfileIdentifier() != null)
+                record.put("sharingProfileId", entry.getSharingProfileIdentifier());
+
+            commands().hset(ClusterKeys.shareKey(shareKey), record);
+            available = true;
+
+        }
+
+        // A share key that cannot be stored simply never works elsewhere, which
+        // is how an expired key already behaves. It must not fail the share.
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to publish share key to the cluster. It will "
+                    + "work only on this replica.", e);
+        }
+
+    }
+
+    @Override
+    public SharedConnectionEntry getShareKey(String shareKey) {
+
+        try {
+
+            Map<String, String> record = commands().hgetall(ClusterKeys.shareKey(shareKey));
+            available = true;
+
+            if (record.isEmpty())
+                return null;
+
+            return new SharedConnectionEntry(
+                    record.get("seatToken"),
+                    record.get("guacdConnectionId"),
+                    record.get("connIdentifier"),
+                    record.get("sharingProfileId"),
+                    record.get("sharedBy"));
+
+        }
+
+        // An unreadable key is an invalid key, which is how an expired key
+        // already behaves
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return null;
+        }
+
+    }
+
+    @Override
+    public void removeShareKey(String shareKey) {
+
+        try {
+            commands().del(ClusterKeys.shareKey(shareKey));
+            available = true;
+        }
+
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to remove share key from the cluster. It will "
+                    + "stop working when its session ends.", e);
+        }
+
+    }
+
+    /**
+     * Clears the entire keyspace. Intended only for tests.
+     */
+    public void flushForTesting() {
+        commands().flushall();
     }
 
     @Override

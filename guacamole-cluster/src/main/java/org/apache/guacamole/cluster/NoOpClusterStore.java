@@ -102,6 +102,21 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public void putShareKey(String shareKey, SharedConnectionEntry entry) {
+        // Share keys never leave this replica when clustering is disabled
+    }
+
+    @Override
+    public SharedConnectionEntry getShareKey(String shareKey) {
+        return null;
+    }
+
+    @Override
+    public void removeShareKey(String shareKey) {
+        // Nothing was ever stored
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }
