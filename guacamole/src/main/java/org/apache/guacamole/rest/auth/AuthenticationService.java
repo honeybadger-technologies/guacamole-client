@@ -104,6 +104,14 @@ public class AuthenticationService {
     private ListenerService listenerService;
 
     /**
+     * The HTTP request currently being served. Guice's servlet scope supplies
+     * this per request, which is what lets a rebuilt session carry the details
+     * of the request that triggered the rebuild.
+     */
+    @Inject
+    private com.google.inject.Provider<HttpServletRequest> requestProvider;
+
+    /**
      * The session timeout for the Guacamole REST API, in minutes. This is the
      * same property HashTokenSessionMap reads; it is re-declared here because
      * that declaration is private to that class.
@@ -706,12 +714,6 @@ public class AuthenticationService {
      *     The rebuilt session, or null if the token is unknown to the cluster
      *     or its provider does not permit rebuilding.
      */
-    // setRemoteAddress and setRemoteHostname are deprecated in favour of
-    // constructing a RequestDetails, but RequestDetails can only be built from
-    // a live HttpServletRequest -- its constructor dereferences one -- and a
-    // rehydrated session has no request to copy. The setters are the only way
-    // to carry the originating address onto rebuilt credentials.
-    @SuppressWarnings("deprecation")
     private GuacamoleSession rehydrateSession(String authToken) {
 
         TokenIdentity identity = clusterStore.getToken(hashToken(authToken));
@@ -741,13 +743,13 @@ public class AuthenticationService {
 
         try {
 
-            // The cast is required: Credentials declares both a
-            // (String, String, HttpServletRequest) and a
-            // (String, String, RequestDetails) constructor
+            // Built from the request that triggered the rebuild. A fabricated
+            // Credentials is not an option: its constructor copies the request,
+            // and RequestDetails dereferences it. The live request is also the
+            // more accurate source -- the rebuilt session is being used from
+            // here and now, not from wherever it was first authenticated.
             Credentials skeleton = new Credentials(null, null,
-                    (HttpServletRequest) null);
-            skeleton.setRemoteAddress(identity.getRemoteAddress());
-            skeleton.setRemoteHostname(identity.getRemoteHostname());
+                    requestProvider.get());
 
             AuthenticatedUser authenticatedUser =
                     ((RehydratableAuthenticationProvider) authProvider)
