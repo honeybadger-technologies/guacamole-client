@@ -519,6 +519,11 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
+    public boolean isClustered() {
+        return true;
+    }
+
+    @Override
     public boolean isAvailable() {
 
         if (available)

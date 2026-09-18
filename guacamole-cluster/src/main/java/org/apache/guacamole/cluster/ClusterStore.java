@@ -160,6 +160,18 @@ public interface ClusterStore {
      *     true if the backing store was reachable as of the most recent
      *     operation, false if callers should degrade to replica-local behavior.
      */
+    /**
+     * Returns whether this store actually coordinates a cluster. A no-op store
+     * answers false, which is how callers know that cluster-only routing (such
+     * as the join route table) does not apply and upstream behaviour should be
+     * used instead.
+     *
+     * @return
+     *     true if cluster state is really being shared, false if clustering is
+     *     disabled.
+     */
+    boolean isClustered();
+
     boolean isAvailable();
 
     /**

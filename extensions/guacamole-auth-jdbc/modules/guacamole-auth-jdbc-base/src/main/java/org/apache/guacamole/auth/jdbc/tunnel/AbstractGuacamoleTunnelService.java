@@ -388,9 +388,13 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
     private GuacdEndpoint selectGuacdEndpoint(ActiveConnectionRecord activeConnection,
             ModeledConnection connection) throws GuacamoleException {
 
-        // Joining an existing guacd connection: route to its owner
+        // Joining an existing guacd connection: route to its owner. Only the
+        // cluster knows which guacd that is; with clustering off there is no
+        // route table, and falling through selects the single configured guacd
+        // exactly as upstream does -- the join still happens, because the guacd
+        // connection ID travels in the configuration.
         String joinId = activeConnection.getConnectionID();
-        if (joinId != null)
+        if (joinId != null && clusterStore.isClustered())
             return guacdSelector.selectForJoin(joinId);
 
         // Explicitly pinned to a specific guacd in the database

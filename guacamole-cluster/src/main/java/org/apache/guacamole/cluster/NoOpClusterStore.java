@@ -82,6 +82,11 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public boolean isClustered() {
+        return false;
+    }
+
+    @Override
     public boolean isAvailable() {
         return false;
     }
