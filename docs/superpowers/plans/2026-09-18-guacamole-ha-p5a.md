@@ -1127,6 +1127,18 @@ git commit -m "GUACAMOLE-283: Record security control verification"
 - **Prometheus metrics and Helm packaging** are P5b. The chart must default to
   the secure configuration this plan makes mandatory, which is why it follows
   rather than precedes.
+
+  **P5b has no chart to author.** The deployment already exists as a Terraform
+  module at `devops-k8s-infra/infra-aws/modules/addons/guacamole`, which wraps
+  the third-party chart `oci://ghcr.io/maximewewer/charts/guacamole` in a
+  `helm_release` and supplies everything cluster-specific through a
+  `kubernetes_config_map_v1` and env vars. P5b therefore extends that module --
+  Redis, the `cluster-*` properties, the Secret and the NetworkPolicy -- rather
+  than packaging a chart of our own. Two constraints follow from reading it:
+  `guacd_replicas > 1` is already guarded by a comment saying scaling guacd
+  splits tunnel state, which is exactly what P0/P1 fixed and the module does not
+  know yet; and the module's own `hpa_enabled` path autoscales the web tier,
+  which only becomes safe with the session store P4b added.
 - **Sentinel is not implemented, and may never be.** `redis-sentinel-ha.yaml`
   exists and is unvalidated. If Redis moves to a managed service with a stable
   primary endpoint, the work disappears instead of being done. Decide that before
