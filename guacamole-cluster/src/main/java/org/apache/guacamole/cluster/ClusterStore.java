@@ -262,6 +262,37 @@ public interface ClusterStore {
      */
     void publishShareRevocation(String shareKey);
 
+    /**
+     * Records one authentication failure for the given client address,
+     * re-arming the window in which those failures count.
+     *
+     * @param address
+     *     The address the failed request originated from.
+     *
+     * @param banDurationSeconds
+     *     The number of seconds a failure remains counted.
+     *
+     * @return
+     *     The number of failures recorded for that address including this one,
+     *     or -1 if the cluster could not be reached. -1 means unknown and never
+     *     zero: reporting zero would unban every address for the duration of an
+     *     outage.
+     */
+    int recordAuthenticationFailure(String address, int banDurationSeconds);
+
+    /**
+     * Returns the number of authentication failures currently counted against
+     * the given client address.
+     *
+     * @param address
+     *     The address being checked.
+     *
+     * @return
+     *     The number of failures counted against that address, zero if none,
+     *     or -1 if the cluster could not be reached.
+     */
+    int getAuthenticationFailures(String address);
+
     void shutdown();
 
 }
