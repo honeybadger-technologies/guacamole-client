@@ -304,6 +304,40 @@ public class ActiveConnectionRecord extends ModeledConnectionRecord {
     }
 
     /**
+     * Creates a new ActiveConnectionRecord describing a join of an existing
+     * session, identified by the connection ID guacd issued for that session
+     * rather than by a local record of it. This is what allows a share key to
+     * be redeemed on a replica which does not own the session being shared.
+     *
+     * @param connectionMap
+     *     The SharedConnectionMap instance tracking all active shared
+     *     connections.
+     *
+     * @param user
+     *     The user that connected to the connection associated with this
+     *     connection record.
+     *
+     * @param connection
+     *     The connection being joined.
+     *
+     * @param guacdConnectionId
+     *     The connection ID issued by guacd for the session being joined.
+     *
+     * @param sharingProfile
+     *     The sharing profile that was used to share access to the given
+     *     connection, or null if no sharing profile should be used (access to
+     *     the connection is unrestricted).
+     */
+    public ActiveConnectionRecord(SharedConnectionMap connectionMap,
+            RemoteAuthenticatedUser user,
+            ModeledConnection connection,
+            String guacdConnectionId,
+            ModeledSharingProfile sharingProfile) {
+        this(connectionMap, user, null, connection, sharingProfile);
+        this.connectionID = guacdConnectionId;
+    }
+
+    /**
      * Returns the user that connected to the connection associated with this
      * connection record.
      *

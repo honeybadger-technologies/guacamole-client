@@ -1023,9 +1023,12 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
             GuacamoleClientInformation info, Map<String, String> tokens)
             throws GuacamoleException {
 
-        // Create a connection record which describes the shared connection
+        // Create a connection record which describes the shared connection,
+        // built from the definition's own facts rather than from a live record,
+        // so a key shared on another replica can be redeemed here.
         ActiveConnectionRecord connectionRecord = new ActiveConnectionRecord(connectionMap,
-                user, definition.getActiveConnection(), definition.getSharingProfile());
+                user, definition.getConnection(), definition.getGuacdConnectionId(),
+                definition.getSharingProfile());
 
         // Connect to shared connection described by the created record
         GuacamoleTunnel tunnel = assignGuacamoleTunnel(connectionRecord, info, tokens, false);
