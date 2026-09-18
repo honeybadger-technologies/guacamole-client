@@ -38,6 +38,7 @@ import org.apache.guacamole.cluster.ClusterLogoutHandler;
 import org.apache.guacamole.cluster.ClusterProperties;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.NoOpClusterStore;
+import org.apache.guacamole.cluster.RedisUris;
 import org.apache.guacamole.cluster.RehydratableAuthenticationProvider;
 import org.apache.guacamole.cluster.TokenIdentity;
 import org.apache.guacamole.cluster.redis.RedisClusterStore;
@@ -191,7 +192,7 @@ public class AuthenticationService {
 
             logger.info("Session tokens will be shared across the cluster via "
                     + "\"{}\". A session will survive the loss of the replica "
-                    + "it authenticated against.", redisUri);
+                    + "it authenticated against.", RedisUris.redact(redisUri));
 
             return new RedisClusterStore(redisUri, 30000L, "webapp");
 

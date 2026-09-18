@@ -651,6 +651,56 @@ logged in and from where. **Any deployment of the token store requires
 the `guac:` prefix.** The devqa Redis has neither. That is acceptable for a test
 namespace on a private cluster and is not acceptable anywhere else.
 
+**Supplying the credential.** A Redis URI carries its credentials inline, so
+authentication and encryption are configured entirely through
+`CLUSTER_REDIS_URI`:
+
+```
+rediss://guacamole:PASSWORD@redis.example.com:6379
+```
+
+`rediss` selects TLS and the userinfo selects ACL authentication; Lettuce reads
+both from the scheme and the URI, so neither needs a code change.
+
+Deliver it from a Secret rather than a literal:
+
+```yaml
+env:
+  - name: CLUSTER_REDIS_URI
+    valueFrom:
+      secretKeyRef:
+        name: guacamole-redis
+        key: uri
+```
+
+**An environment variable is readable by anyone who can describe the pod or read
+the Deployment**, which is a wider audience than those who can read the Secret.
+That is the accepted trade-off here. If that audience ever needs narrowing, the
+image also reads any property from a file named by a `*_FILE` variable, so
+`CLUSTER_REDIS_URI_FILE` pointing at a mounted Secret is a drop-in change with
+no code impact.
+
+**The URI is redacted before it is logged.** Two lines used to print it
+verbatim, which would have written the password to the log the moment one
+existed -- `AuthenticationService` on startup and `ClusterModule` when cluster
+coordination is enabled. Both now pass it through `RedisUris.redact`, which
+keeps the scheme, host and port and replaces any credentials:
+
+```
+Cluster coordination is ENABLED against "rediss://***@redis.example.com:6379".
+```
+
+The scheme is deliberately preserved: it is how an operator confirms from the
+log alone that the connection is encrypted. A URI the redactor cannot parse is
+reported as `(redacted)` rather than echoed, because an unrecognised shape is
+the one most likely to carry a credential in a form the parser did not expect.
+
+**One check still outstanding.** Lettuce logs connection details of its own at
+DEBUG. Before enabling authentication anywhere real, run once with
+`LOG_LEVEL=debug` against an authenticated Redis and grep the output for the
+password, to confirm the client does not print what this change stopped the
+application from printing.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
