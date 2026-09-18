@@ -77,7 +77,7 @@
             <groupId>org.apache.guacamole</groupId>
             <artifactId>guacamole-cluster</artifactId>
             <version>${revision}</version>
-            <scope>compile</scope>
+            <scope>provided</scope>
         </dependency>
 
     </dependencies>
