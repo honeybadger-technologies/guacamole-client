@@ -1,0 +1,92 @@
+name: Security scanning
+
+# Supply-chain gates for the clustering fork. CI was one docker build: this
+# fork adds Lettuce, Netty and Reactor, and ships them inside extension jars as
+# nested jars, where a scan of the Maven reactor alone attributes them to a
+# different module. Both scans are therefore needed rather than either.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # A dependency does not have to change for it to become vulnerable, so the
+    # scan runs on a schedule as well as on changes
+    - cron: '17 4 * * 1'
+
+concurrency:
+  group: guacamole-client-security-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  dependencies:
+    name: Scan declared dependencies
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The frontend lockfile is skipped here on purpose: it is build-time
+      # tooling that never reaches the runtime image, and the image scan below
+      # is the check for what actually ships. Gating merges on upstream's
+      # devDependencies would make the gate unpassable, and a gate nobody can
+      # go green on gets switched off.
+      - name: Scan the Maven dependency tree
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignorefile: .trivyignore.yaml
+          skip-dirs: guacamole/src/main/frontend
+          exit-code: '1'
+
+  image:
+    name: Scan the built image
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        shell: sh
+        run: |
+          docker build --pull --force-rm -t guacamole-client:scan .
+
+      # Catches what the reactor scan cannot: the nested jars inside each
+      # extension, and the runtime base image, which is selected by build args
+      # rather than pinned by digest
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: guacamole-client:scan
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignorefile: .trivyignore.yaml
+          exit-code: '1'
+
+      - name: Generate an SBOM
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: guacamole-client:scan
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+
+      # The value is answering "are we affected" on the day a CVE lands,
+      # without rebuilding anything
+      - name: Publish the SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json
+          retention-days: 90

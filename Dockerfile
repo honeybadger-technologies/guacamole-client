@@ -27,8 +27,15 @@
 ARG TOMCAT_VERSION=9
 ARG TOMCAT_JRE=jdk21
 
-# Use official maven image for the build
-FROM maven:3-eclipse-temurin-21 AS builder
+# Use official maven image for the build, pinned by digest so that rebuilding an
+# older commit produces the same builder. The digest is maven:3-eclipse-temurin-21
+# as of 2026-09-18.
+#
+# The runtime base below is deliberately NOT digest-pinned: TOMCAT_VERSION and
+# TOMCAT_JRE are a documented build-arg contract, and a pinned digest would
+# silently ignore an override of either. The image scan in
+# .github/workflows/security.yml is the control for that base instead.
+FROM maven:3-eclipse-temurin-21@sha256:c2a2c58516d160f43b50f12baa427ca86989e0bc942609e04aff61da5d9a7d74 AS builder
 
 # Use Mozilla's Firefox PPA (newer Ubuntu lacks a "firefox-esr" package and
 # provides only a transitional "firefox" package that actually requires Snap
