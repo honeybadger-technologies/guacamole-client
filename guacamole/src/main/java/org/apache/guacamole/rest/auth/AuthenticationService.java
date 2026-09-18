@@ -808,16 +808,26 @@ public class AuthenticationService {
      */
     public boolean destroyGuacamoleSession(String authToken) {
 
+        // RESTExceptionMapper calls this for every unauthorized response,
+        // including those carrying no token at all
+        if (authToken == null)
+            return false;
+
         String tokenHash = hashToken(authToken);
 
-        // Withdraw from the cluster first, so that no replica can rebuild the
-        // token after this point
+        // Withdraw from the cluster before anything else, so that no replica
+        // can rebuild the session from this point on
         clusterStore.removeToken(tokenHash);
-        clusterStore.publishLogout(tokenHash);
-        localTokensByHash.remove(tokenHash);
 
-        // Remove corresponding GuacamoleSession if the token is valid
+        // Then take our own copy, and only then announce the logout. The
+        // announcement is delivered to this replica too, and a subscriber that
+        // ran first would remove the session before the line below could see
+        // it -- which reported "no such token" for a logout that had in fact
+        // just succeeded.
         GuacamoleSession session = tokenSessionMap.remove(authToken);
+        localTokensByHash.remove(tokenHash);
+        clusterStore.publishLogout(tokenHash);
+
         if (session == null)
             return false;
 
