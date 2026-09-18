@@ -360,6 +360,92 @@ outage makes the remote session invisible, and the request 404s in ~0.025 s.
 That is honest — it never reports success — but it is not the path the plan
 predicted, and the timeout is a narrower race than it first appears.
 
+### 9. Cross-replica share keys (P3b)
+
+Image `1.6.1-p3e`, two web-app replicas, two guacd. A is `10.1.72.224`, B is
+`10.1.70.166`. The API was driven from an in-cluster pod; the connection is an
+SSH session against `ssh-target`, with a read-only sharing profile on it.
+
+A share key minted on A and redeemed on B:
+
+```
+share key:              deNHDAQ_N7QRW8P9YOWyD5YIcwtstjBSb8rCJmXGpIXT
+auth on B:              {"dataSource": "postgresql-shared", ...}
+shared directory on B:  {"deNHDAQ...":{"name":"share-test","protocol":"ssh",
+                          "attributes":{"jdbc-shared-by":"guacadmin"}}}
+```
+
+Before P3b that POST returned `INVALID_CREDENTIALS` on B, because the key lived
+only in A's heap. The connection name and the sharing user are answered from the
+definition's own fields, rebuilt from the Redis hash plus the shared database —
+no record of the session exists anywhere on B.
+
+**The join lands on the session, not on a new desktop.** Both users appear on one
+guacd connection, one arriving from each replica:
+
+```
+guacd: User "@118689c4-..." joined connection "$68ab07a1-..." (1 users now present)
+guacd: Joining existing connection "$68ab07a1-..."
+guacd: User "@dae06d14-..." joined connection "$68ab07a1-..." (2 users now present)
+```
+
+`guac:share:<key>` carries five fields — `seatToken`, `guacdConnectionId`,
+`connIdentifier`, `sharingProfileId`, `sharedBy` — and one `guac:route:` entry
+covers both tunnels.
+
+**Revocation.** Killing the shared session from B returned 204 in 0.062 s. The
+share key disappeared from Redis immediately (`exists` → 0), and the key was then
+refused on **both** replicas.
+
+#### Three findings, two of them defects older than this phase
+
+**Joining a shared connection crashed as soon as clustering was on.** The share
+key path never minted a cluster seat token, so its `TunnelRegistration` was keyed
+on null:
+
+```
+java.lang.NullPointerException
+  ConcurrentHashMap.putVal(ConcurrentHashMap.java:1011)
+  ClusterHeartbeat.add(ClusterHeartbeat.java:73)
+  AbstractGuacamoleTunnelService.assignGuacamoleTunnel(...:698)
+  SharedConnection.connect(SharedConnection.java:134)
+```
+
+This is a P2 defect. The two primary connect paths mint a token; this third one
+was missed, and no clustered deployment had exercised sharing until now. The join
+now gets a token without acquiring a seat — it joins a session that already holds
+one — and cleanup withdraws registrations for joins as well as primaries.
+
+**Every share-key join failed closed when clustering was off.**
+`selectGuacdEndpoint` routes a join through the cluster route table and fails
+closed when no route exists, which is right while clustering is on. With
+`cluster-enabled=false` the bound store is `NoOpClusterStore`, whose
+`lookupRoute` always returns null, so the same guard rejected every join with a
+404. Since `cluster-enabled` defaults to false, this broke sharing for anyone
+running this fork unclustered — present since P1.
+
+Isolated by A/B on the same config and script: `1.6.1-p3d` failed 2 of 2 runs,
+`1.6.1-p3e` passed 2 of 2. The join branch is now taken only when the store
+really coordinates a cluster.
+
+**Driving the HTTP tunnel by hand has four traps**, all of which produced
+misleading failures before being understood:
+
+- `key` is a query parameter, but the POST still needs
+  `Content-Type: application/x-www-form-urlencoded`, or Jersey throws on
+  `@FormParam`.
+- `sync` carries two arguments (`4.sync,7.9636167,1.0;`); the ack must echo only
+  the timestamp.
+- The read response is a stream. Waiting for the whole body means the ack is
+  never sent and guacd kills the client with status 776 (CLIENT_TIMEOUT), logged
+  as *"User is not responding"*.
+- `HTTPResponse.read(n)` blocks until n bytes arrive. A sync is ~20 bytes, so
+  `read(512)` lagged the ack by ~25 s. `read1()` fixes it.
+
+**The devqa Postgres is on an `emptyDir`.** Every connection defined in earlier
+phases was gone after a pod restart; only the schema-seeded `guacadmin` user
+survives. Reseed before testing.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
