@@ -903,4 +903,17 @@ public class AuthenticationService {
 
     }
 
+
+    /**
+     * Releases the cluster resources held by this service.
+     *
+     * Called from GuacamoleServletContextListener.contextDestroyed. Without
+     * it, a Tomcat redeploy leaves behind a Lettuce client, its Netty event
+     * loops, and the authenticated connection and credential that opened it,
+     * in the memory of a web application that is supposed to have gone away.
+     */
+    public void shutdown() {
+        clusterStore.shutdown();
+    }
+
 }

@@ -24,6 +24,8 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.net.auth.AbstractAuthenticationProvider;
 import org.apache.guacamole.net.auth.Credentials;
 import org.apache.guacamole.net.auth.UserContext;
+import org.apache.guacamole.cluster.ClusterHeartbeat;
+import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.RehydratableAuthenticationProvider;
 import org.apache.guacamole.net.auth.AuthenticatedUser;
 
@@ -44,6 +46,12 @@ public abstract class InjectedAuthenticationProvider
      * calls will be delegated.
      */
     private final AuthenticationProviderService authProviderService;
+
+    /**
+     * The injector this provider was built from, retained so that the cluster
+     * resources it holds can be released on undeploy.
+     */
+    private final Injector injector;
 
     /**
      * Creates a new AuthenticationProvider that delegates all calls to an
@@ -68,7 +76,7 @@ public abstract class InjectedAuthenticationProvider
             Class<? extends AuthenticationProviderService> authProviderServiceClass)
         throws GuacamoleException {
 
-        Injector injector = injectorProvider.get();
+        injector = injectorProvider.get();
         authProviderService = injector.getInstance(authProviderServiceClass);
 
     }
@@ -105,6 +113,17 @@ public abstract class InjectedAuthenticationProvider
             throws GuacamoleException {
         return authProviderService.decorateUserContext(this, context,
                 authenticatedUser, credentials);
+    }
+
+
+    @Override
+    public void shutdown() {
+
+        // Heartbeat first: closing the store first would leave the heartbeat
+        // writing to a closed connection for up to one interval
+        injector.getInstance(ClusterHeartbeat.class).shutdown();
+        injector.getInstance(ClusterStore.class).shutdown();
+
     }
 
 }
