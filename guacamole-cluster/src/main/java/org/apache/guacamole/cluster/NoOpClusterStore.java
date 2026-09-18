@@ -144,6 +144,26 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public void putToken(String tokenHash, TokenIdentity identity, int timeoutSeconds) {
+        // Sessions never leave this replica when clustering is disabled
+    }
+
+    @Override
+    public TokenIdentity getToken(String tokenHash) {
+        return null;
+    }
+
+    @Override
+    public void removeToken(String tokenHash) {
+        // Nothing was ever stored
+    }
+
+    @Override
+    public void touchToken(String tokenHash, int timeoutSeconds) {
+        // Nothing was ever stored
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }
