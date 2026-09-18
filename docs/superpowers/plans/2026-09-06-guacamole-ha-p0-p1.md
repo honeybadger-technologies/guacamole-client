@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged via PR #1. Verified live — see `../deploy/README.md` sections 1-6. One claim in this plan was disproved by the deployment: cross-replica *join* is not reachable in P0/P1, because the active-connection directory stays replica-local until P3a. The routing half is correct and is what P3a builds on.
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P0 + P1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

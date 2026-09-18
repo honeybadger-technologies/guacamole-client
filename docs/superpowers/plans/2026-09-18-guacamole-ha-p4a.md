@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged in `a988982be`. Verified live — see `../deploy/README.md` section 10. Implemented with one deliberate deviation from the spec: a successful login does not clear the failure count, matching the in-memory tracker.
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P4a Implementation Plan (cluster-wide brute-force bans)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

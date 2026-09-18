@@ -1,9 +1,35 @@
-# Two-Replica Cluster Deployment (P1)
+# Two-Replica Cluster Deployment
 
 Runs two Guacamole web application replicas against a pool of two `guacd`
 instances, coordinated through Redis.
 
-What P1 delivers, and therefore what is worth verifying here:
+**This file grew phase by phase and is now the record of all of them.** Sections
+1-3 were written for P1 and sections 4-11 were appended as later phases landed,
+so a section describes what was true when it was measured. For the programme as
+a whole -- what is built, what the implementation proved the design wrong about,
+and what is left -- read `../HA-CLUSTERING-STATUS.md` first.
+
+| Want | Read |
+|---|---|
+| What each phase delivers, and its live measurement | sections 1-11 below |
+| Which manifest to apply | *Files* below |
+| Why Redis needs authentication as of P4b | section 11, and `redis-acl.md` |
+| The programme summary | `../HA-CLUSTERING-STATUS.md` |
+
+## Files
+
+| File | Use |
+|---|---|
+| `guacamole-deployment.yaml` | the web application, two replicas |
+| `guacd-headless-service.yaml` | the guacd pool and its headless Service |
+| `redis-hardened.yaml` | **the Redis to deploy** -- authenticated, `noeviction`, persistent, NetworkPolicy |
+| `redis-sentinel-ha.yaml` | optional: three nodes and three Sentinels, for a shorter degraded window |
+| `redis-acl.md` | the ACL, how its command list was derived, and preflight checks for a shared Redis |
+| `redis.yaml` | **superseded.** The original unauthenticated single pod, kept only because sections 1-10 were measured against it |
+| `ingress-sticky.yaml` | sticky-session Ingress |
+| `hpa.yaml` | autoscaling for both tiers |
+
+What P1 delivers, and therefore what is worth verifying in sections 1-3:
 
 1. **Multi-guacd load spreading** — new connections go to the least-loaded
    `guacd` in the pool.

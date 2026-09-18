@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged in `a2cbc7c18`. Verified live — see `../deploy/README.md` section 8. The spec claim about `TrackedActiveConnection` setters was false; the connection is loaded from the shared database instead.
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P3a Implementation Plan (active-connection index and kill)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

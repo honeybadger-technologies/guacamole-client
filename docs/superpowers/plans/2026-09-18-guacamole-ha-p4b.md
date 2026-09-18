@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged in `b6786c3f8`. Verified live — see `../deploy/README.md` section 11. The plan underestimated the packaging problem: cluster classes had to move into `guacamole-ext` before any of this could load, and four defects surfaced only on a deployment. Redis became security-sensitive at this phase.
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P4b Implementation Plan (auth token store and session recovery)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

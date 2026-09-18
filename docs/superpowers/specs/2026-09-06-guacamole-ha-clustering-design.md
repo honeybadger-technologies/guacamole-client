@@ -1,8 +1,29 @@
 # Guacamole HA Clustering — Design
 
 **Date:** 2026-09-06
-**Status:** Approved design, pending implementation plan
+**Status:** P0 through P4b implemented and merged. P5 outstanding.
 **Repos:** `guacamole-client` (all changes), `guacamole-server` (unchanged)
+
+> **This document is the design as approved, not as built.** It is kept intact
+> so that the reasoning behind each decision survives, and the places the
+> implementation contradicted it are recorded rather than edited away. Six such
+> places are listed in `../HA-CLUSTERING-STATUS.md`; the ones that change how
+> the system is deployed or extended are flagged inline below.
+>
+> The largest is structural. §2.4 puts the cluster code in a module of its own.
+> That does not work: both the web application and every extension need those
+> classes, and each would load its own copy, so the same type becomes two
+> `Class` objects and Guice fails with `argument type mismatch`. The code lives
+> in `guacamole-ext` instead, which is in the WAR once and which every extension
+> already takes as `provided`. `ClusterModule` sits in the JDBC extension,
+> because it is the only class that touches Guice and keeping it out is what
+> lets the rest be shared.
+>
+> Two smaller corrections worth reading before trusting a section: §4.5's claim
+> that `TrackedActiveConnection` exposes plain setters is false, and §5.7's
+> instruction to delete the failure counter on a successful login does not match
+> the in-memory tracker it is meant to mirror — and would let an attacker who
+> guesses one valid account clear their own address.
 
 ---
 
@@ -327,6 +348,14 @@ Service name (`guacd-cluster-dns`) via `InetAddress.getAllByName()`, re-resolved
 few-second cache. Kubernetes returns only ready pod IPs for a headless Service, which
 is the liveness signal.
 
+> **Correction, found in P3a.** This section states that
+> `TrackedActiveConnection` "exposes plain setters for every field the UI
+> needs". It does not: `setConnectionIdentifier` throws
+> `UnsupportedOperationException`, and `getConnectionIdentifier()` reads through
+> to the connection object, so a remote entry fails on serialisation whether or
+> not the setter is called. The implementation loads the real
+> `ModeledConnection` from the database every replica shares.
+
 ### 4.5 Cluster-wide admin listing and kill
 
 **Listing.** `ActiveConnectionService.java:88,140` merges local `ActiveConnectionRecord`
@@ -459,6 +488,13 @@ their sessions, not their login: they land on a healthy replica already
 authenticated and reconnect.
 
 ### 5.7 Cluster-wide brute-force ban tracking
+
+> **Correction, found in P4a.** The "Success" operation below specifies
+> `DEL guac:authfail:{address}`. `InMemoryAuthenticationFailureTracker` does not
+> clear failures on success — `notifyAuthenticationSuccess` and
+> `notifyAuthenticationRequestReceived` make the identical call, and only the
+> passage of time removes a count. The implementation follows the in-memory
+> behaviour, and stores no delete at all.
 
 `AuthenticationFailureTracker` (`AuthenticationFailureTracker.java:29`) is a
 three-method interface — `notifyAuthenticationRequestReceived`,

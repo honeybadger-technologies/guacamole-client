@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged in `a2cbc7c18`. Verified live — see `../deploy/README.md` section 7. Task 8 found three P1 defects that turned a Redis outage into a connection outage, all fixed here.
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P2 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,3 +1,7 @@
+> **Status: delivered.** Merged in `a2cbc7c18`. Verified live — see `../deploy/README.md` section 9. Two defects older than this phase were fixed here: a share-key join carried no cluster seat token (P2), and every join failed closed when clustering was disabled (P1).
+>
+> See `../HA-CLUSTERING-STATUS.md` for the programme-level summary.
+
 # Guacamole HA Clustering — P3b Implementation Plan (cross-replica share keys)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

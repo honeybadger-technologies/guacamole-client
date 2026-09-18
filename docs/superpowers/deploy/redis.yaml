@@ -17,6 +17,16 @@
 # under the License.
 #
 
+# SUPERSEDED by redis-hardened.yaml.
+#
+# This is the original single unauthenticated pod. It is kept because
+# sections 1-10 of README.md were measured against it, and removing it would
+# make those measurements unreproducible.
+#
+# Do not deploy it as of P4b: Redis now holds session identity, and a token
+# hash plus a username is enough to learn who is logged in and from where.
+# Use redis-hardened.yaml instead.
+
 ---
 # Redis owns cluster state. Redis 7 is the tested floor: the seat script calls
 # TIME and then writes, which relies on effects replication.
