@@ -62,6 +62,25 @@ public class ClusterProperties {
     };
 
     /**
+     * Whether cluster state may be held in a Redis which is unauthenticated,
+     * unencrypted, or both. Defaults to false.
+     *
+     * Since P4b the keyspace holds session identity, so an open Redis exposes
+     * who is logged in and from where to anything that can reach the port.
+     * Setting this to true is appropriate for a private test namespace and
+     * nowhere else.
+     */
+    public static final BooleanGuacamoleProperty CLUSTER_ALLOW_INSECURE_REDIS =
+            new BooleanGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-allow-insecure-redis";
+        }
+
+    };
+
+    /**
      * Identity of this replica. Defaults to the HOSTNAME environment variable
      * plus a random suffix.
      */

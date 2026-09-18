@@ -36,9 +36,9 @@ import org.apache.guacamole.GuacamoleUnauthorizedException;
 import org.apache.guacamole.GuacamoleSession;
 import org.apache.guacamole.cluster.ClusterLogoutHandler;
 import org.apache.guacamole.cluster.ClusterProperties;
+import org.apache.guacamole.cluster.ClusterSecurityPolicy;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.NoOpClusterStore;
-import org.apache.guacamole.cluster.RedisUris;
 import org.apache.guacamole.cluster.RehydratableAuthenticationProvider;
 import org.apache.guacamole.cluster.TokenIdentity;
 import org.apache.guacamole.cluster.redis.RedisClusterStore;
@@ -181,30 +181,46 @@ public class AuthenticationService {
      */
     private static ClusterStore createClusterStore() {
 
+        String redisUri;
+        boolean allowInsecure;
+
         try {
 
             Environment environment = LocalEnvironment.getInstance();
             if (!ClusterProperties.isEnabled(environment))
                 return new NoOpClusterStore();
 
-            String redisUri = environment.getProperty(
+            redisUri = environment.getProperty(
                     ClusterProperties.CLUSTER_REDIS_URI, "redis://localhost:6379");
 
-            logger.info("Session tokens will be shared across the cluster via "
-                    + "\"{}\". A session will survive the loss of the replica "
-                    + "it authenticated against.", RedisUris.redact(redisUri));
-
-            return new RedisClusterStore(redisUri, 30000L, "webapp");
+            allowInsecure = environment.getProperty(
+                    ClusterProperties.CLUSTER_ALLOW_INSECURE_REDIS, false);
 
         }
 
-        // A misconfigured cluster property must not stop the webapp from
+        // A property that cannot be read at all must not stop the webapp from
         // serving sessions; it degrades to replica-local ones
         catch (GuacamoleException e) {
             logger.warn("Unable to determine whether clustering is enabled. "
                     + "Sessions will not survive the loss of a replica.", e);
             return new NoOpClusterStore();
         }
+
+        try {
+            logger.info("Session tokens will be shared across the cluster. {} A "
+                    + "session will survive the loss of the replica it "
+                    + "authenticated against.",
+                    ClusterSecurityPolicy.check(redisUri, allowInsecure));
+        }
+
+        // A refused URI is fatal rather than degraded. Degrading would disable
+        // the token store silently while the JDBC extension refused separately,
+        // leaving an operator with a broken cluster and no single reason
+        catch (GuacamoleException e) {
+            throw new IllegalStateException(e.getMessage(), e);
+        }
+
+        return new RedisClusterStore(redisUri, 30000L, "webapp");
 
     }
 
