@@ -37,12 +37,14 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.ClusterKillHandler;
+import org.apache.guacamole.cluster.ClusterLogoutHandler;
 import org.apache.guacamole.cluster.ClusterShareRevocationHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
 import org.apache.guacamole.cluster.SeatResult;
 import org.apache.guacamole.cluster.SharedConnectionEntry;
+import org.apache.guacamole.cluster.TokenIdentity;
 import org.apache.guacamole.cluster.TunnelRegistration;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 import org.slf4j.Logger;
@@ -107,6 +109,12 @@ public class RedisClusterStore implements ClusterStore {
      * null if this replica has not registered one.
      */
     private volatile ClusterShareRevocationHandler shareRevocationHandler;
+
+    /**
+     * Handler invoked when a session is logged out anywhere in the cluster, or
+     * null if this replica has not registered one.
+     */
+    private volatile ClusterLogoutHandler logoutHandler;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final LuaScript recordAuthFailure = LuaScript.load(RECORD_AUTH_FAILURE_SCRIPT);
     private final long staleWindowMs;
@@ -551,6 +559,12 @@ public class RedisClusterStore implements ClusterStore {
         subscribeIfNeeded();
     }
 
+    @Override
+    public void onLogout(ClusterLogoutHandler handler) {
+        this.logoutHandler = handler;
+        subscribeIfNeeded();
+    }
+
     /**
      * Opens the single pub/sub connection this replica uses for every cluster
      * message, subscribing to each channel. Both kills and share key
@@ -584,6 +598,12 @@ public class RedisClusterStore implements ClusterStore {
                                 handler.shareRevoked(payload);
                         }
 
+                        else if (ClusterKeys.LOGOUT_CHANNEL.equals(channel)) {
+                            ClusterLogoutHandler handler = logoutHandler;
+                            if (handler != null)
+                                handler.loggedOut(payload);
+                        }
+
                     }
 
                     // A handler that throws must not kill the subscriber
@@ -596,7 +616,8 @@ public class RedisClusterStore implements ClusterStore {
             });
 
             pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL,
-                    ClusterKeys.SHARE_REVOKE_CHANNEL);
+                    ClusterKeys.SHARE_REVOKE_CHANNEL,
+                    ClusterKeys.LOGOUT_CHANNEL);
             pubSubConnection = pubSub;
 
         }
@@ -817,6 +838,143 @@ public class RedisClusterStore implements ClusterStore {
      */
     public long authFailureTtlForTesting(String address) {
         return commands().ttl(ClusterKeys.authFailure(address));
+    }
+
+    @Override
+    public void putToken(String tokenHash, TokenIdentity identity, int timeoutSeconds) {
+
+        try {
+
+            Map<String, String> record = new HashMap<String, String>();
+            record.put("username", identity.getUsername());
+            record.put("authProvider", identity.getAuthProviderIdentifier());
+            record.put("authenticatedTime",
+                    Long.toString(identity.getAuthenticatedTime()));
+
+            if (identity.getRemoteAddress() != null)
+                record.put("remoteAddress", identity.getRemoteAddress());
+
+            if (identity.getRemoteHostname() != null)
+                record.put("remoteHostname", identity.getRemoteHostname());
+
+            String key = ClusterKeys.token(tokenHash);
+            commands().hset(key, record);
+            commands().expire(key, timeoutSeconds);
+            available = true;
+
+        }
+
+        // A token that cannot be published simply does not survive the loss of
+        // this replica, which is the pre-cluster behaviour
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to publish session token to the cluster. This "
+                    + "session will not survive the loss of this replica.", e);
+        }
+
+    }
+
+    @Override
+    public TokenIdentity getToken(String tokenHash) {
+
+        try {
+
+            Map<String, String> record = commands().hgetall(ClusterKeys.token(tokenHash));
+            available = true;
+
+            if (record.isEmpty())
+                return null;
+
+            return new TokenIdentity(
+                    record.get("username"),
+                    record.get("authProvider"),
+                    record.get("remoteAddress"),
+                    record.get("remoteHostname"),
+                    Long.parseLong(record.get("authenticatedTime")));
+
+        }
+
+        // An unreadable token is simply not rehydratable, which is how an
+        // expired token already behaves
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return null;
+        }
+
+        catch (NumberFormatException e) {
+            logger.warn("Session token record is corrupt and will be ignored.", e);
+            return null;
+        }
+
+    }
+
+    @Override
+    public void removeToken(String tokenHash) {
+
+        try {
+            commands().del(ClusterKeys.token(tokenHash));
+            available = true;
+        }
+
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to remove session token from the cluster. It "
+                    + "will expire on its own.", e);
+        }
+
+    }
+
+    @Override
+    public void touchToken(String tokenHash, int timeoutSeconds) {
+
+        try {
+            commands().expire(ClusterKeys.token(tokenHash), timeoutSeconds);
+            available = true;
+        }
+
+        // Losing one refresh only shortens the idle window for this session
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+        }
+
+    }
+
+    /**
+     * Returns the remaining lifetime of a session token, in seconds. Intended
+     * only for tests.
+     *
+     * @param tokenHash
+     *     The hash of the token to examine.
+     *
+     * @return
+     *     The remaining lifetime of the token, in seconds.
+     */
+    public long tokenTtlForTesting(String tokenHash) {
+        return commands().ttl(ClusterKeys.token(tokenHash));
+    }
+
+    @Override
+    public void publishLogout(String tokenHash) {
+
+        try {
+            commands().publish(ClusterKeys.LOGOUT_CHANNEL, tokenHash);
+            available = true;
+        }
+
+        // The token is already gone from the cluster, so it can no longer be
+        // rebuilt; only the dropping of sessions already rebuilt is lost
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to announce logout. A session rebuilt from this "
+                    + "token on another replica will survive until it times "
+                    + "out.", e);
+        }
+
     }
 
     @Override

@@ -17,9 +17,14 @@
  * under the License.
  */
 
-package org.apache.guacamole.cluster;
+package org.apache.guacamole.auth.jdbc.cluster;
 
 import com.google.inject.AbstractModule;
+import org.apache.guacamole.cluster.ClusterHeartbeat;
+import org.apache.guacamole.cluster.ClusterProperties;
+import org.apache.guacamole.cluster.ClusterStore;
+import org.apache.guacamole.cluster.NoOpClusterStore;
+import org.apache.guacamole.cluster.RedisUris;
 import java.util.UUID;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
@@ -136,7 +141,7 @@ public class ClusterModule extends AbstractModule {
                 heartbeat = new ClusterHeartbeat(store, interval);
                 heartbeat.start();
 
-                logger.info("Cluster coordination is ENABLED against \"{}\".", uri);
+                logger.info("Cluster coordination is ENABLED against \"{}\".", RedisUris.redact(uri));
 
             }
             else {

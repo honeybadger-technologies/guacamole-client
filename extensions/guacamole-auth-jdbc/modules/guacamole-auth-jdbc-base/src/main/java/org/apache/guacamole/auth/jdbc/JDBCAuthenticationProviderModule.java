@@ -91,7 +91,7 @@ import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserMapper;
 import org.apache.guacamole.GuacamoleException;
-import org.apache.guacamole.cluster.ClusterModule;
+import org.apache.guacamole.auth.jdbc.cluster.ClusterModule;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupParentUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupService;
 import org.mybatis.guice.MyBatisModule;

@@ -68,7 +68,24 @@
                 <artifactId>maven-javadoc-plugin</artifactId>
             </plugin>
 
-        </plugins>
+        
+            <!--
+                Docker Engine 29 rejects API versions below its advertised
+                MinAPIVersion (1.40), while the docker-java client bundled with
+                Testcontainers negotiates 1.32 by default and receives HTTP 400.
+                Pinning the API version here keeps Testcontainers working
+                against both current and older engines.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <api.version>1.44</api.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+</plugins>
     </build>
 
     <dependencies>
@@ -113,6 +130,64 @@
             <artifactId>ipaddress</artifactId>
         </dependency>
 
-    </dependencies>
+    
+        <!--
+            Cluster coordination. These classes live here rather than in a
+            module of their own because both the web application and every
+            extension need them, and a type that crosses that boundary must be
+            loaded from exactly one place: extensions take guacamole-ext as
+            "provided" and resolve it from the web application.
+        -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- JUnit 5 and Testcontainers (Redis-backed cluster tests) -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            This module's own tests are JUnit 4. Without the vintage engine,
+            adding Jupiter silently stops running them: surefire picks the
+            JUnit 5 platform and finds no Jupiter tests in those classes.
+        -->
+        <dependency>
+            <groupId>org.junit.vintage</groupId>
+            <artifactId>junit-vintage-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+</dependencies>
 
 </project>

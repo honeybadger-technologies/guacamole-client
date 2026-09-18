@@ -140,4 +140,32 @@ public interface AuthenticationProviderService  {
             UserContext context, AuthenticatedUser authenticatedUser,
             Credentials credentials) throws GuacamoleException;
 
+
+    /**
+     * Rebuilds the AuthenticatedUser of a session which was authenticated
+     * against this provider on another replica. Returns null by default, which
+     * denies rebuilding -- a provider must opt in deliberately.
+     *
+     * @param authenticationProvider
+     *     The AuthenticationProvider on behalf of which the user is rebuilt.
+     *
+     * @param username
+     *     The identifier of the user whose session is being rebuilt.
+     *
+     * @param skeleton
+     *     Credentials carrying the request's remote address and hostname, and
+     *     no secret.
+     *
+     * @return
+     *     The rebuilt AuthenticatedUser, or null if the session may not be
+     *     rebuilt.
+     *
+     * @throws GuacamoleException
+     *     If an error prevents the user from being rebuilt.
+     */
+    default AuthenticatedUser rehydrate(AuthenticationProvider authenticationProvider,
+            String username, Credentials skeleton) throws GuacamoleException {
+        return null;
+    }
+
 }

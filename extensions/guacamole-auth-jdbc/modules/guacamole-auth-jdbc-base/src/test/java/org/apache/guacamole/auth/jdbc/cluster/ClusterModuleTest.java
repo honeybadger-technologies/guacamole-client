@@ -17,9 +17,11 @@
  * under the License.
  */
 
-package org.apache.guacamole.cluster;
+package org.apache.guacamole.auth.jdbc.cluster;
 
 import com.google.inject.Guice;
+import org.apache.guacamole.cluster.ClusterStore;
+import org.apache.guacamole.cluster.NoOpClusterStore;
 import com.google.inject.Injector;
 import java.io.File;
 import java.util.HashMap;

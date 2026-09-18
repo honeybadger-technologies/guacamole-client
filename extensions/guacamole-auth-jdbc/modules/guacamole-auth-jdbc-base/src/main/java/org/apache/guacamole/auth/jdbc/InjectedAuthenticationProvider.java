@@ -24,6 +24,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.net.auth.AbstractAuthenticationProvider;
 import org.apache.guacamole.net.auth.Credentials;
 import org.apache.guacamole.net.auth.UserContext;
+import org.apache.guacamole.cluster.RehydratableAuthenticationProvider;
 import org.apache.guacamole.net.auth.AuthenticatedUser;
 
 /**
@@ -34,7 +35,9 @@ import org.apache.guacamole.net.auth.AuthenticatedUser;
  * AuthenticationProvider, even though it is the AuthenticationProvider that
  * serves as the entry point.
  */
-public abstract class InjectedAuthenticationProvider extends AbstractAuthenticationProvider {
+public abstract class InjectedAuthenticationProvider
+        extends AbstractAuthenticationProvider
+        implements RehydratableAuthenticationProvider {
 
     /**
      * The AuthenticationProviderService to which all AuthenticationProvider
@@ -74,6 +77,12 @@ public abstract class InjectedAuthenticationProvider extends AbstractAuthenticat
     public AuthenticatedUser authenticateUser(Credentials credentials)
             throws GuacamoleException {
         return authProviderService.authenticateUser(this, credentials);
+    }
+
+    @Override
+    public AuthenticatedUser rehydrate(String username, Credentials skeleton)
+            throws GuacamoleException {
+        return authProviderService.rehydrate(this, username, skeleton);
     }
 
     @Override
