@@ -14,6 +14,7 @@ user default off
 user guacamole on >CHANGE_ME_TO_THE_SAME_PASSWORD ~guac:* &guac:* \
     -@all \
     +@connection +@keyspace +@string +@hash +@sortedset +@scripting +@pubsub \
+    +time \
     -flushall -flushdb -keys -scan -randomkey \
     -script|flush -script|kill
 ```
@@ -45,12 +46,42 @@ ZCARD ZREMRANGEBYSCORE ZSCORE` inside the Lua scripts.
 - `KEYS`, `SCAN` and `RANDOMKEY` are denied because nothing needs them, and
   `KEYS guac:token:*` is the one command that turns this keyspace into a list
   of who is currently logged in.
+- **`+time` is granted explicitly, and is easy to miss.** `TIME` belongs to
+  `@fast`, which none of the classes above include. Both `acquire-seats.lua` and
+  `countTunnels` read the clock from the Redis server rather than from a replica,
+  precisely so that clock drift between replicas cannot affect staleness -- so
+  denying it disables seat acquisition and load counting.
 
 **Verify the ACL against a running Redis before trusting it.** An over-tight
 ACL fails in a way that looks like an application bug: connections succeed and
 one feature stops working. The cheapest check is to exercise a login, a
 connection, a share and a logout with the ACL in place, then confirm the log
 carries no `NOPERM`.
+
+That warning is not hypothetical. The first version of this ACL omitted `+time`,
+and the result was **silent**: users logged in, connections opened, and sessions
+worked. What actually happened is that every seat acquisition failed, and P2's
+designed degradation caught it and fell back to per-replica limits -- so
+clustering had quietly switched itself off while every user-visible operation
+kept succeeding. It surfaced only as three warnings that a casual reading would
+take for noise:
+
+```
+Unable to count tunnels for guacd "10.1.83.221|4822|NONE". Treating as unloaded.
+Unable to publish tunnel to the cluster.
+Unable to list cluster tunnels.
+```
+
+and, at DEBUG:
+
+```
+NOPERM User guacamole has no permissions to run the 'time' command
+```
+
+Testing an ACL with `redis-cli` is necessary and not sufficient: every command
+in the list above passed that way. Only running the application found the one
+that mattered, because `TIME` is issued from inside a Lua script and from a code
+path whose failure is caught and degraded rather than raised.
 
 ## Preflight checks for a shared Redis
 

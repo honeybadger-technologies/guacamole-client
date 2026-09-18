@@ -29,7 +29,12 @@
 #
 #   kubectl -n remote-access create secret generic guacamole-redis \
 #       --from-literal=password='<a long random password>' \
-#       --from-literal=uri='redis://guacamole:<same password>@redis:6379'
+#       --from-literal=uri='redis://guacamole:<same password>@redis:6379' \
+#       --from-file=users.acl=users.acl
+#
+# The ACL itself is in redis-acl.md. Note that it grants "+time" explicitly:
+# omitting it disables seat acquisition silently, because that failure is
+# caught and degraded rather than raised.
 #
 # The URI is what Guacamole reads as CLUSTER_REDIS_URI. Keep the two in step.
 ---
