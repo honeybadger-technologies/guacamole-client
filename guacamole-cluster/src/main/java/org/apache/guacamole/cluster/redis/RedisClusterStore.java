@@ -70,6 +70,9 @@ public class RedisClusterStore implements ClusterStore {
     private static final String ACQUIRE_SEATS_SCRIPT =
             "/org/apache/guacamole/cluster/redis/acquire-seats.lua";
 
+    private static final String RECORD_AUTH_FAILURE_SCRIPT =
+            "/org/apache/guacamole/cluster/redis/record-auth-failure.lua";
+
     private final RedisClient client;
 
     /**
@@ -105,6 +108,7 @@ public class RedisClusterStore implements ClusterStore {
      */
     private volatile ClusterShareRevocationHandler shareRevocationHandler;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
+    private final LuaScript recordAuthFailure = LuaScript.load(RECORD_AUTH_FAILURE_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
 
@@ -745,6 +749,74 @@ public class RedisClusterStore implements ClusterStore {
      */
     public void flushForTesting() {
         commands().flushall();
+    }
+
+    @Override
+    public int recordAuthenticationFailure(String address, int banDurationSeconds) {
+
+        try {
+            long count = recordAuthFailure.eval(commands(),
+                    new String[] { ClusterKeys.authFailure(address) },
+                    new String[] { Integer.toString(banDurationSeconds) });
+            available = true;
+            return (int) count;
+        }
+
+        // -1 is "unknown", never "none": reporting zero here would unban every
+        // address for as long as Redis is unreachable
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return -1;
+        }
+
+    }
+
+    @Override
+    public int getAuthenticationFailures(String address) {
+
+        String value;
+
+        try {
+            value = commands().get(ClusterKeys.authFailure(address));
+            available = true;
+        }
+
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return -1;
+        }
+
+        if (value == null)
+            return 0;
+
+        try {
+            return Integer.parseInt(value);
+        }
+
+        // A counter that is not a number is corrupt rather than absent, so the
+        // caller is routed to its fallback rather than told there are none
+        catch (NumberFormatException e) {
+            logger.warn("Authentication failure counter for \"{}\" is not a "
+                    + "number. Falling back to replica-local tracking.", address);
+            return -1;
+        }
+
+    }
+
+    /**
+     * Returns the remaining lifetime of an address's failure counter, in
+     * seconds. Intended only for tests.
+     *
+     * @param address
+     *     The address whose counter should be examined.
+     *
+     * @return
+     *     The remaining lifetime of the counter, in seconds.
+     */
+    public long authFailureTtlForTesting(String address) {
+        return commands().ttl(ClusterKeys.authFailure(address));
     }
 
     @Override

@@ -102,4 +102,8 @@ public final class ClusterKeys {
         return "guac:share:" + escape(shareKey);
     }
 
+    public static String authFailure(String address) {
+        return "guac:authfail:" + escape(address);
+    }
+
 }

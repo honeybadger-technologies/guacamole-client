@@ -446,6 +446,86 @@ misleading failures before being understood:
 phases was gone after a pod restart; only the schema-seeded `guacadmin` user
 survives. Reseed before testing.
 
+### 10. Cluster-wide brute-force bans (P4a)
+
+Image `1.6.1-p4a`, two web-app replicas, `BAN_MAX_INVALID_ATTEMPTS=4` and
+`BAN_ADDRESS_DURATION=120` so the test is short. All attempts come from one
+in-cluster pod, so every request carries the same source address.
+
+Startup names the tracker, which is the first thing to check:
+
+```
+Addresses will be automatically banned for 120 seconds after 4 failed
+authentication attempts, counted across the whole cluster. The
+"ban-max-addresses" property no longer bounds the number of tracked addresses
+-- it applies only to the fallback used while Redis is unreachable.
+```
+
+**Failures split across replicas are counted once.** Two bad logins against A, then
+two against B:
+
+```
+attempt 1 against A -> 403  rejected
+attempt 2 against A -> 403  rejected
+attempt 3 against B -> 403  rejected
+attempt 4 against B -> 429  BANNED
+attempt 5 against B -> 429  BANNED
+attempt 6 against A -> 429  BANNED
+```
+
+Attempt 6 is the result that matters: **replica A had seen only two failures of its
+own, and still refuses.** Before this phase each replica counted separately, so this
+same sequence left both at two and banned nothing.
+
+Redis holds one key for the address:
+
+```
+guac:authfail:10.1.76.23  ->  4      ttl 107
+```
+
+The value stays at 4 through attempts 5 and 6. A blocked request throws before it can
+record anything, which is also what the in-memory tracker does.
+
+**A successful login does not clear the count**, which is this phase's deliberate
+departure from the spec. With the counter at 2:
+
+```
+successful login -> 200
+counter after success -> 2
+```
+
+§5.7 specifies `DEL` on success. `InMemoryAuthenticationFailureTracker` does not do
+that -- `notifyAuthenticationSuccess` and `notifyAuthenticationRequestReceived` make
+the identical call -- and implementing it would let an attacker who guesses one valid
+account clear their own address and resume.
+
+**With clustering disabled the upstream weakness is visible again**, which is the
+control that proves the cluster counter is what changed:
+
+```
+CLUSTER_ENABLED=false
+attempt 1 against A -> 403  rejected
+attempt 2 against A -> 403  rejected
+attempt 3 against B -> 403  rejected
+attempt 4 against B -> 403  rejected      <- four failures, no ban
+```
+
+Startup reverts to the upstream wording, and the pre-existing Redis key was left at
+2 with its TTL still draining, so the disabled path wrote nothing to Redis at all.
+
+#### One finding
+
+**`ClusterModule.isEnabled` cannot be called from an extension that lacks Guice.**
+`ClusterModule extends AbstractModule`, so naming the class fails compilation with
+`cannot access AbstractModule / class file for com.google.inject.AbstractModule not
+found`. Adding Guice to `guacamole-auth-ban` purely to read one boolean would have
+put roughly a megabyte of Guice into the extension jar for no return. The check moved
+to `ClusterProperties`, which imports only `guacamole-ext` property types;
+`ClusterModule.isEnabled` delegates to it, so existing callers are unaffected.
+Verified afterwards: the built extension contains **0** Guice jars, and does contain
+`guacamole-cluster-1.6.1.jar` and `lettuce-core-6.3.2.RELEASE.jar` among its 15
+nested jars.
+
 ## What P1 does NOT do
 
 Stated so a later phase's gap is not mistaken for a bug in this one:
