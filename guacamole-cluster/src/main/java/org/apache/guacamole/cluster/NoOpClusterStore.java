@@ -164,6 +164,16 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public void onLogout(ClusterLogoutHandler handler) {
+        // Nothing to subscribe to when clustering is disabled
+    }
+
+    @Override
+    public void publishLogout(String tokenHash) {
+        // No other replica exists to announce to
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }

@@ -19,15 +19,31 @@
 
 package org.apache.guacamole.rest.auth;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import javax.inject.Inject;
+import javax.servlet.http.HttpServletRequest;
 
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleSecurityException;
 import org.apache.guacamole.GuacamoleUnauthorizedException;
 import org.apache.guacamole.GuacamoleSession;
+import org.apache.guacamole.cluster.ClusterLogoutHandler;
+import org.apache.guacamole.cluster.ClusterProperties;
+import org.apache.guacamole.cluster.ClusterStore;
+import org.apache.guacamole.cluster.NoOpClusterStore;
+import org.apache.guacamole.cluster.RehydratableAuthenticationProvider;
+import org.apache.guacamole.cluster.TokenIdentity;
+import org.apache.guacamole.cluster.redis.RedisClusterStore;
+import org.apache.guacamole.environment.Environment;
+import org.apache.guacamole.environment.LocalEnvironment;
+import org.apache.guacamole.properties.IntegerGuacamoleProperty;
 import org.apache.guacamole.net.auth.AuthenticatedUser;
 import org.apache.guacamole.net.auth.AuthenticationProvider;
 import org.apache.guacamole.net.auth.Credentials;
@@ -86,6 +102,138 @@ public class AuthenticationService {
      */
     @Inject
     private ListenerService listenerService;
+
+    /**
+     * The session timeout for the Guacamole REST API, in minutes. This is the
+     * same property HashTokenSessionMap reads; it is re-declared here because
+     * that declaration is private to that class.
+     */
+    private static final IntegerGuacamoleProperty API_SESSION_TIMEOUT =
+            new IntegerGuacamoleProperty() {
+
+        @Override
+        public String getName() { return "api-session-timeout"; }
+
+    };
+
+    /**
+     * Default session timeout, in minutes, matching HashTokenSessionMap.
+     */
+    private static final int DEFAULT_API_SESSION_TIMEOUT = 60;
+
+    /**
+     * Cluster state holding session identity. A no-op store unless clustering
+     * is enabled.
+     *
+     * The webapp cannot share the JDBC extension's store: extensions load in
+     * their own classloaders, so this is a second Lettuce client per replica.
+     */
+    private final ClusterStore clusterStore = createClusterStore();
+
+    /**
+     * Raw tokens issued or rebuilt by this replica, by their hash.
+     *
+     * A cluster logout message carries only the hash, while the local session
+     * map is keyed by the raw token, so this is the only way to connect the
+     * two. It never leaves the JVM, and holds nothing the session map does not
+     * already hold.
+     */
+    private final ConcurrentMap<String, String> localTokensByHash =
+            new ConcurrentHashMap<String, String>();
+
+    /**
+     * The idle lifetime of a session, in seconds.
+     *
+     * @return
+     *     The configured API session timeout, in seconds.
+     */
+    private static int sessionTimeoutSeconds() {
+
+        try {
+            return LocalEnvironment.getInstance().getProperty(API_SESSION_TIMEOUT,
+                    DEFAULT_API_SESSION_TIMEOUT) * 60;
+        }
+
+        catch (GuacamoleException e) {
+            logger.warn("Unable to read the API session timeout. Using the "
+                    + "default of {} minutes for cluster session expiry.",
+                    DEFAULT_API_SESSION_TIMEOUT, e);
+            return DEFAULT_API_SESSION_TIMEOUT * 60;
+        }
+
+    }
+
+    /**
+     * Builds the cluster store this replica uses for session identity.
+     *
+     * @return
+     *     A Redis-backed store if clustering is enabled, a no-op store
+     *     otherwise.
+     */
+    private static ClusterStore createClusterStore() {
+
+        try {
+
+            Environment environment = LocalEnvironment.getInstance();
+            if (!ClusterProperties.isEnabled(environment))
+                return new NoOpClusterStore();
+
+            String redisUri = environment.getProperty(
+                    ClusterProperties.CLUSTER_REDIS_URI, "redis://localhost:6379");
+
+            logger.info("Session tokens will be shared across the cluster via "
+                    + "\"{}\". A session will survive the loss of the replica "
+                    + "it authenticated against.", redisUri);
+
+            return new RedisClusterStore(redisUri, 30000L, "webapp");
+
+        }
+
+        // A misconfigured cluster property must not stop the webapp from
+        // serving sessions; it degrades to replica-local ones
+        catch (GuacamoleException e) {
+            logger.warn("Unable to determine whether clustering is enabled. "
+                    + "Sessions will not survive the loss of a replica.", e);
+            return new NoOpClusterStore();
+        }
+
+    }
+
+    /**
+     * Returns the SHA-256 of the given auth token, hex-encoded.
+     *
+     * The token is a bearer credential, so the cluster stores its hash rather
+     * than the token itself. A Redis dump, a backup, or an operator listing
+     * keys then yields nothing usable for impersonation, while exact-match
+     * lookup -- the only operation needed -- still works.
+     *
+     * @param authToken
+     *     The token to hash.
+     *
+     * @return
+     *     The hex-encoded SHA-256 of the given token.
+     */
+    private static String hashToken(String authToken) {
+
+        try {
+
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(authToken.getBytes(StandardCharsets.UTF_8));
+
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash)
+                hex.append(String.format("%02x", b));
+
+            return hex.toString();
+
+        }
+
+        // SHA-256 is required of every Java implementation
+        catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable.", e);
+        }
+
+    }
 
     /**
      * The name of the HTTP header that may contain the authentication token
@@ -402,6 +550,7 @@ public class AuthenticationService {
             else {
                 authToken = authTokenGenerator.getToken();
                 tokenSessionMap.put(authToken, new GuacamoleSession(listenerService, authenticatedUser, userContexts));
+                publishToken(authToken, authenticatedUser);
             }
 
             // Report authentication success
@@ -463,12 +612,134 @@ public class AuthenticationService {
         
         // Try to get the session from the map of logged in users.
         GuacamoleSession session = tokenSessionMap.get(authToken);
-       
+
+        // A session this replica does not hold may still be live elsewhere in
+        // the cluster
+        if (session == null)
+            session = rehydrateSession(authToken);
+
         // Authentication failed.
         if (session == null)
             throw new GuacamoleUnauthorizedException("Permission Denied.");
-        
+
+        // Keep the cluster's idle expiry in step with local access
+        clusterStore.touchToken(hashToken(authToken), sessionTimeoutSeconds());
+
         return session;
+
+    }
+
+    /**
+     * Publishes the identity behind a newly-issued token to the cluster, so
+     * that the session can be rebuilt on another replica.
+     *
+     * @param authToken
+     *     The token which was issued.
+     *
+     * @param authenticatedUser
+     *     The user the token identifies.
+     */
+    private void publishToken(String authToken, AuthenticatedUser authenticatedUser) {
+
+        Credentials credentials = authenticatedUser.getCredentials();
+        String tokenHash = hashToken(authToken);
+
+        clusterStore.putToken(tokenHash, new TokenIdentity(
+                authenticatedUser.getIdentifier(),
+                authenticatedUser.getAuthenticationProvider().getIdentifier(),
+                credentials != null ? credentials.getRemoteAddress() : null,
+                credentials != null ? credentials.getRemoteHostname() : null,
+                System.currentTimeMillis()),
+                sessionTimeoutSeconds());
+
+        localTokensByHash.put(tokenHash, authToken);
+
+    }
+
+    /**
+     * Rebuilds the session behind a token which this replica does not hold.
+     *
+     * @param authToken
+     *     The token whose session should be rebuilt.
+     *
+     * @return
+     *     The rebuilt session, or null if the token is unknown to the cluster
+     *     or its provider does not permit rebuilding.
+     */
+    // setRemoteAddress and setRemoteHostname are deprecated in favour of
+    // constructing a RequestDetails, but RequestDetails can only be built from
+    // a live HttpServletRequest -- its constructor dereferences one -- and a
+    // rehydrated session has no request to copy. The setters are the only way
+    // to carry the originating address onto rebuilt credentials.
+    @SuppressWarnings("deprecation")
+    private GuacamoleSession rehydrateSession(String authToken) {
+
+        TokenIdentity identity = clusterStore.getToken(hashToken(authToken));
+        if (identity == null)
+            return null;
+
+        // Default deny: only a provider which declares itself rehydratable may
+        // have its sessions rebuilt
+        AuthenticationProvider authProvider = null;
+        for (AuthenticationProvider candidate : authProviders) {
+            if (candidate.getIdentifier().equals(identity.getAuthProviderIdentifier())) {
+                authProvider = candidate;
+                break;
+            }
+        }
+
+        if (!(authProvider instanceof RehydratableAuthenticationProvider)) {
+            logger.debug("Session for user \"{}\" will not be rebuilt: provider "
+                    + "\"{}\" is not rehydratable.", identity.getUsername(),
+                    identity.getAuthProviderIdentifier());
+            return null;
+        }
+
+        try {
+
+            // The cast is required: Credentials declares both a
+            // (String, String, HttpServletRequest) and a
+            // (String, String, RequestDetails) constructor
+            Credentials skeleton = new Credentials(null, null,
+                    (HttpServletRequest) null);
+            skeleton.setRemoteAddress(identity.getRemoteAddress());
+            skeleton.setRemoteHostname(identity.getRemoteHostname());
+
+            AuthenticatedUser authenticatedUser =
+                    ((RehydratableAuthenticationProvider) authProvider)
+                            .rehydrate(identity.getUsername(), skeleton);
+
+            if (authenticatedUser == null)
+                return null;
+
+            // Permissions are re-read here, so an account disabled or
+            // de-permissioned since login is caught
+            List<DecoratedUserContext> userContexts =
+                    getUserContexts(null, authenticatedUser, skeleton);
+
+            GuacamoleSession session = new GuacamoleSession(listenerService,
+                    authenticatedUser, userContexts);
+            tokenSessionMap.put(authToken, session);
+            localTokensByHash.put(hashToken(authToken), authToken);
+
+            // No AuthenticationSuccessEvent is fired here, deliberately. That
+            // event drives login accounting and brute-force banning, and a
+            // replica restart must not present as a burst of logins.
+            logger.info("Session for user \"{}\" rebuilt on this replica.",
+                    identity.getUsername());
+            return session;
+
+        }
+
+        // A session that cannot be rebuilt is simply not rebuilt; the user
+        // authenticates again, which is the pre-cluster behaviour
+        // GuacamoleAuthenticationProcessException extends GuacamoleException,
+        // so one catch covers both
+        catch (GuacamoleException e) {
+            logger.warn("Unable to rebuild session for user \"{}\".",
+                    identity.getUsername(), e);
+            return null;
+        }
 
     }
 
@@ -486,6 +757,14 @@ public class AuthenticationService {
      *     authentication token was not valid and no action was taken.
      */
     public boolean destroyGuacamoleSession(String authToken) {
+
+        String tokenHash = hashToken(authToken);
+
+        // Withdraw from the cluster first, so that no replica can rebuild the
+        // token after this point
+        clusterStore.removeToken(tokenHash);
+        clusterStore.publishLogout(tokenHash);
+        localTokensByHash.remove(tokenHash);
 
         // Remove corresponding GuacamoleSession if the token is valid
         GuacamoleSession session = tokenSessionMap.remove(authToken);

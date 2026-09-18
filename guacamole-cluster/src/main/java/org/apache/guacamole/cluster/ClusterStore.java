@@ -340,6 +340,25 @@ public interface ClusterStore {
      */
     void touchToken(String tokenHash, int timeoutSeconds);
 
+    /**
+     * Registers the handler to be invoked when a session is logged out anywhere
+     * in the cluster, so that a session rebuilt from that token on this replica
+     * can be dropped.
+     *
+     * @param handler
+     *     The handler to invoke on logout.
+     */
+    void onLogout(ClusterLogoutHandler handler);
+
+    /**
+     * Announces to every replica that the session behind the given token hash
+     * has been logged out.
+     *
+     * @param tokenHash
+     *     The hash of the token which is no longer valid.
+     */
+    void publishLogout(String tokenHash);
+
     void shutdown();
 
 }

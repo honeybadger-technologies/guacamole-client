@@ -37,6 +37,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.ClusterKillHandler;
+import org.apache.guacamole.cluster.ClusterLogoutHandler;
 import org.apache.guacamole.cluster.ClusterShareRevocationHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
@@ -108,6 +109,12 @@ public class RedisClusterStore implements ClusterStore {
      * null if this replica has not registered one.
      */
     private volatile ClusterShareRevocationHandler shareRevocationHandler;
+
+    /**
+     * Handler invoked when a session is logged out anywhere in the cluster, or
+     * null if this replica has not registered one.
+     */
+    private volatile ClusterLogoutHandler logoutHandler;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final LuaScript recordAuthFailure = LuaScript.load(RECORD_AUTH_FAILURE_SCRIPT);
     private final long staleWindowMs;
@@ -552,6 +559,12 @@ public class RedisClusterStore implements ClusterStore {
         subscribeIfNeeded();
     }
 
+    @Override
+    public void onLogout(ClusterLogoutHandler handler) {
+        this.logoutHandler = handler;
+        subscribeIfNeeded();
+    }
+
     /**
      * Opens the single pub/sub connection this replica uses for every cluster
      * message, subscribing to each channel. Both kills and share key
@@ -585,6 +598,12 @@ public class RedisClusterStore implements ClusterStore {
                                 handler.shareRevoked(payload);
                         }
 
+                        else if (ClusterKeys.LOGOUT_CHANNEL.equals(channel)) {
+                            ClusterLogoutHandler handler = logoutHandler;
+                            if (handler != null)
+                                handler.loggedOut(payload);
+                        }
+
                     }
 
                     // A handler that throws must not kill the subscriber
@@ -597,7 +616,8 @@ public class RedisClusterStore implements ClusterStore {
             });
 
             pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL,
-                    ClusterKeys.SHARE_REVOKE_CHANNEL);
+                    ClusterKeys.SHARE_REVOKE_CHANNEL,
+                    ClusterKeys.LOGOUT_CHANNEL);
             pubSubConnection = pubSub;
 
         }
@@ -935,6 +955,26 @@ public class RedisClusterStore implements ClusterStore {
      */
     public long tokenTtlForTesting(String tokenHash) {
         return commands().ttl(ClusterKeys.token(tokenHash));
+    }
+
+    @Override
+    public void publishLogout(String tokenHash) {
+
+        try {
+            commands().publish(ClusterKeys.LOGOUT_CHANNEL, tokenHash);
+            available = true;
+        }
+
+        // The token is already gone from the cluster, so it can no longer be
+        // rebuilt; only the dropping of sessions already rebuilt is lost
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to announce logout. A session rebuilt from this "
+                    + "token on another replica will survive until it times "
+                    + "out.", e);
+        }
+
     }
 
     @Override
