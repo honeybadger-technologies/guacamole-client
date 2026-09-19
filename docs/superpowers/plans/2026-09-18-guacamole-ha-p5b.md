@@ -1034,7 +1034,29 @@ public class MetricsModule extends ServletModule {
 
 Install it in `GuacamoleServletContextListener.getInjector()`, in the same `createChildInjector` call that already installs `RESTServiceModule` and `TunnelModule`.
 
-**The store the module needs is the web application's own.** `AuthenticationService` builds it in a private field. Rather than widening that field's visibility, pass `null` and let the servlet skip `publishMetrics()` if reaching it proves awkward — the counters still render, and only the two gauges go stale. Prefer a getter on `AuthenticationService` if one can be added without changing how the store is built; do not construct a second store to satisfy this, which would double the connections P5a just accounted for.
+**The store the module needs is the web application's own, and it must be reached through a getter on `AuthenticationService` — not by naming `RedisClusterStore` again.**
+
+```java
+    /**
+     * Returns the cluster store this replica holds session identity in.
+     *
+     * @return
+     *     The web application's cluster store.
+     */
+    public ClusterStore getClusterStore() {
+        return clusterStore;
+    }
+```
+
+The reason is not style. `AuthenticationService.createClusterStore()` contains the only place
+the web application names the implementation class, and that single line is what a later split
+of the cluster package into its own artifact has to remove. Adding a second direct reference
+here would double that work for no benefit. A getter costs the same to write and leaves the
+count at one.
+
+Do not construct a second store to satisfy this — it would double the connections P5a
+accounted for. If the getter proves unreachable from the module, pass `null`: the counters
+still render and only the two gauges go stale.
 
 - [ ] **Step 6: Run it to verify it passes**
 
@@ -1490,6 +1512,36 @@ In the style of sections 4 through 12: the commands, the observed output, and an
 - [ ] **Step 6: Commit both repositories**
 
 ---
+
+## Deferred: splitting the cluster package into its own artifact
+
+Recorded here so that the decision is findable rather than remembered.
+
+Asked on 2026-09-19 whether the cluster package should move to its own repository and be bound
+as a Guacamole extension, the answer was to ship first: **working code, then a usage analysis,
+then a refactor if the analysis warrants one.** P5b is therefore executed against the current
+layout, and nothing in it assumes the split will or will not happen.
+
+What the split would and would not be allowed to move is already settled by the classloader
+rule, and does not need revisiting when the time comes:
+
+- **Must stay in `guacamole-ext`** (a `provided` artifact, defined once by the web application's
+  loader): every type that appears in a signature both sides implement or call —
+  `ClusterStore`, `NoOpClusterStore`, `RehydratableAuthenticationProvider`, `TokenIdentity`, the
+  handler interfaces, the `Seat*`/`Shared*`/`Tunnel*` value types, `ClusterProperties`,
+  `ClusterSecurityPolicy`, `ClusterKeys`, and `ClusterMetrics` — the last because a shared
+  registry is the whole point of it.
+- **Could move** to a separately released implementation artifact: `RedisClusterStore`, the Lua
+  scripts, Lettuce, `GuacdPool`, `GuacdSelector`, `ClusterHeartbeat`.
+- **The one thing standing in the way** is that the web application names `RedisClusterStore`
+  directly, in `AuthenticationService.createClusterStore()`. Task 3 above is written so as not
+  to add a second such reference.
+
+**What step 2 should measure**, so the refactor is decided on evidence: whether Lettuce and
+Netty living inside the WAR actually costs anything in practice — upstream merge friction
+against `apache/guacamole-client`, and the supply-chain scan surface P5a's gate now reports on.
+If neither hurts, the split buys tidiness at the price of the P4b failure class, and should not
+be done.
 
 ## What P5b does NOT do
 
