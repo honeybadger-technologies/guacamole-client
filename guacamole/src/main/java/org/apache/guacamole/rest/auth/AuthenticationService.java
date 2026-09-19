@@ -905,6 +905,21 @@ public class AuthenticationService {
 
 
     /**
+     * Returns the cluster store this replica holds session identity in.
+     *
+     * Exposed so that the metrics endpoint can sample the store's gauges
+     * without naming the implementation class a second time -- the single
+     * reference in createClusterStore is what a later split of the cluster
+     * package into its own artifact has to remove.
+     *
+     * @return
+     *     The web application's cluster store.
+     */
+    public ClusterStore getClusterStore() {
+        return clusterStore;
+    }
+
+    /**
      * Releases the cluster resources held by this service.
      *
      * Called from GuacamoleServletContextListener.contextDestroyed. Without

@@ -81,6 +81,37 @@ public class ClusterProperties {
     };
 
     /**
+     * Whether the Prometheus metrics endpoint is served. Defaults to false.
+     */
+    public static final BooleanGuacamoleProperty CLUSTER_METRICS_ENABLED =
+            new BooleanGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-metrics-enabled";
+        }
+
+    };
+
+    /**
+     * Bearer token required by the metrics endpoint.
+     *
+     * The endpoint cannot require a Guacamole session, because a scraper does
+     * not have one, and it cannot be open, because the Ingress routes every
+     * path to this application. Enabling metrics without a token is refused at
+     * startup.
+     */
+    public static final StringGuacamoleProperty CLUSTER_METRICS_TOKEN =
+            new StringGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-metrics-token";
+        }
+
+    };
+
+    /**
      * Identity of this replica. Defaults to the HOSTNAME environment variable
      * plus a random suffix.
      */
