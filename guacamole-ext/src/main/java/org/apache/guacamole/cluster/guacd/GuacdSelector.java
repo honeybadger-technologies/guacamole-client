@@ -29,6 +29,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleResourceNotFoundException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterStore;
+import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -140,6 +141,9 @@ public class GuacdSelector {
                 best = candidate;
             }
         }
+
+        ClusterMetrics.counter("guacamole_guacd_selections_total",
+                "endpoint", best.toKey());
 
         return best;
 
