@@ -47,6 +47,7 @@ import org.apache.guacamole.cluster.SharedConnectionEntry;
 import org.apache.guacamole.cluster.TokenIdentity;
 import org.apache.guacamole.cluster.TunnelRegistration;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
+import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -202,13 +203,21 @@ public class RedisClusterStore implements ClusterStore {
             long result = acquireSeats.eval(commands(), keys, args);
             available = true;
 
-            if (result == 0)
+            if (result == 0) {
+                ClusterMetrics.counter("guacamole_cluster_seat_acquisitions_total",
+                        "result", "SUCCESS");
                 return SeatResult.SUCCESS;
+            }
 
-            return seatKeys.get((int) result - 1).getFailureResult();
+            SeatResult failure = seatKeys.get((int) result - 1).getFailureResult();
+            ClusterMetrics.counter("guacamole_cluster_seat_acquisitions_total",
+                    "result", failure.name());
+            return failure;
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "acquireSeats");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to acquire cluster seats.", e);
@@ -229,6 +238,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "releaseSeats");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to release cluster seats.", e);
@@ -322,6 +333,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "registerTunnel");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to register tunnel with cluster.", e);
@@ -351,6 +364,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "unregisterTunnel");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to unregister tunnel from cluster.", e);
@@ -390,6 +405,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "heartbeat");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to refresh cluster heartbeat.", e);
@@ -412,6 +429,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "lookupRoute");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to look up guacd route.", e);
@@ -437,6 +456,8 @@ public class RedisClusterStore implements ClusterStore {
 
         }
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "countTunnels");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to count tunnels for guacd \"{}\". Treating as unloaded.",
@@ -496,6 +517,8 @@ public class RedisClusterStore implements ClusterStore {
         // The administrative view degrades to replica-local rather than
         // failing outright (spec 6.1)
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "listTunnels");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to list cluster tunnels. The active connection "
@@ -517,6 +540,8 @@ public class RedisClusterStore implements ClusterStore {
 
         // The caller degrades to a replica-local view rather than failing
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "lookupSeatToken");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to resolve record \"{}\" to a seat token.", recordUuid, e);
@@ -625,6 +650,8 @@ public class RedisClusterStore implements ClusterStore {
         // Without a subscription this replica simply never honours remote kills
         // or revocations; it must still serve connections
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "subscribeIfNeeded");
             logger.error("Unable to subscribe to cluster messages. Sessions on "
                     + "this replica cannot be terminated from another one, and "
                     + "share keys revoked elsewhere stay open here.", e);
@@ -643,6 +670,8 @@ public class RedisClusterStore implements ClusterStore {
         // The key is already gone from the cluster, so it can no longer be
         // redeemed; only the closing of tunnels already opened from it is lost
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "publishShareRevocation");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to announce revocation of a share key. Tunnels "
@@ -661,6 +690,8 @@ public class RedisClusterStore implements ClusterStore {
         }
 
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "requestKill");
             available = false;
             unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to request cluster kill.", e);
@@ -681,6 +712,8 @@ public class RedisClusterStore implements ClusterStore {
         // reporting "live" makes the caller wait out its own timeout and
         // report failure, which is the honest answer
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "isTunnelLive");
             available = false;
             unavailableSince = System.currentTimeMillis();
             return true;
@@ -710,6 +743,8 @@ public class RedisClusterStore implements ClusterStore {
         // A share key that cannot be stored simply never works elsewhere, which
         // is how an expired key already behaves. It must not fail the share.
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "putShareKey");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to publish share key to the cluster. It will "
@@ -741,6 +776,8 @@ public class RedisClusterStore implements ClusterStore {
         // An unreadable key is an invalid key, which is how an expired key
         // already behaves
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "getShareKey");
             available = false;
             unavailableSince = System.currentTimeMillis();
             return null;
@@ -757,6 +794,8 @@ public class RedisClusterStore implements ClusterStore {
         }
 
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "removeShareKey");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to remove share key from the cluster. It will "
@@ -878,6 +917,8 @@ public class RedisClusterStore implements ClusterStore {
         // -1 is "unknown", never "none": reporting zero here would unban every
         // address for as long as Redis is unreachable
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "recordAuthenticationFailure");
             available = false;
             unavailableSince = System.currentTimeMillis();
             return -1;
@@ -896,6 +937,8 @@ public class RedisClusterStore implements ClusterStore {
         }
 
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "getAuthenticationFailures");
             available = false;
             unavailableSince = System.currentTimeMillis();
             return -1;
@@ -959,6 +1002,8 @@ public class RedisClusterStore implements ClusterStore {
         // A token that cannot be published simply does not survive the loss of
         // this replica, which is the pre-cluster behaviour
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "putToken");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to publish session token to the cluster. This "
@@ -990,6 +1035,8 @@ public class RedisClusterStore implements ClusterStore {
         // An unreadable token is simply not rehydratable, which is how an
         // expired token already behaves
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "getToken");
             available = false;
             unavailableSince = System.currentTimeMillis();
             return null;
@@ -1011,6 +1058,8 @@ public class RedisClusterStore implements ClusterStore {
         }
 
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "removeToken");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to remove session token from the cluster. It "
@@ -1029,6 +1078,8 @@ public class RedisClusterStore implements ClusterStore {
 
         // Losing one refresh only shortens the idle window for this session
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "touchToken");
             available = false;
             unavailableSince = System.currentTimeMillis();
         }
@@ -1060,6 +1111,8 @@ public class RedisClusterStore implements ClusterStore {
         // The token is already gone from the cluster, so it can no longer be
         // rebuilt; only the dropping of sessions already rebuilt is lost
         catch (RedisException e) {
+            ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                    "operation", "publishLogout");
             available = false;
             unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to announce logout. A session rebuilt from this "
@@ -1067,6 +1120,17 @@ public class RedisClusterStore implements ClusterStore {
                     + "out.", e);
         }
 
+    }
+
+    /**
+     * Publishes this store's current state as gauges. Called immediately
+     * before the metrics endpoint renders, so that a gauge is never staler
+     * than the scrape that reads it.
+     */
+    @Override
+    public void publishMetrics() {
+        ClusterMetrics.gauge("guacamole_cluster_store_available", available ? 1 : 0);
+        ClusterMetrics.gauge("guacamole_cluster_enabled", 1);
     }
 
     @Override

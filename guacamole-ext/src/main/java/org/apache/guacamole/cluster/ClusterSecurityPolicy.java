@@ -22,6 +22,7 @@ package org.apache.guacamole.cluster;
 
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
+import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,6 +66,12 @@ public class ClusterSecurityPolicy {
         boolean parseable = uri != null && uri.contains("://");
         boolean encrypted = parseable && uri.startsWith("rediss://");
         boolean authenticated = hasCredentials(uri);
+
+        // Published from here because this is the only place that knows whether
+        // the URI was accepted or merely tolerated. Before the first return, so
+        // that a refused start publishes 1 for the seconds the process lives
+        ClusterMetrics.gauge("guacamole_cluster_redis_insecure",
+                parseable && encrypted && authenticated ? 0 : 1);
 
         if (parseable && encrypted && authenticated)
             return "Cluster state is held in an authenticated, encrypted Redis ("

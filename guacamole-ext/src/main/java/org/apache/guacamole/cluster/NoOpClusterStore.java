@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.Collections;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
+import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 
 /**
  * Cluster store used when clustering is disabled, and as the base for test
@@ -185,6 +186,14 @@ public class NoOpClusterStore implements ClusterStore {
     public List<String> selfCheck() {
         // Nothing to check: no cluster, no permissions, no failures
         return Collections.emptyList();
+    }
+
+
+    @Override
+    public void publishMetrics() {
+        // A deployment with clustering off still publishes the fact, so that
+        // "is this replica clustered" is answerable from Prometheus alone
+        ClusterMetrics.gauge("guacamole_cluster_enabled", 0);
     }
 
 }
