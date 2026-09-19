@@ -70,7 +70,7 @@ The metrics themselves carry no usernames, no connection names and no addresses.
 | File | Change |
 |---|---|
 | `.../cluster/ClusterProperties.java` | `cluster-metrics-enabled`, `cluster-metrics-token` |
-| `.../cluster/redis/RedisClusterStore.java` | Increment a failure counter at each degradation site; count seat outcomes |
+| `.../cluster/redis/RedisClusterStore.java` | Increment a failure counter at each degradation site; count seat outcomes; trust a private CA through SslOptions |
 | `.../cluster/guacd/GuacdSelector.java` | Count selections per endpoint |
 | `.../auth/jdbc/cluster/ClusterModule.java` | Publish the startup gauges |
 | `.../GuacamoleServletContextListener.java` | Install `MetricsModule` |
@@ -1480,15 +1480,28 @@ State the recommendation, the measurement behind it, and the trigger that would 
 - Consumes: everything above.
 - Produces: `deploy/README.md` section 14.
 
-**Task 5 left a real blocker, deliberately visible.** The Redis this module deploys has no TLS, so P5a's policy refuses it, and the only way to run is the `cluster-allow-insecure-redis` opt-out — which would make the insecure path the default path for every environment, including production. That is the opposite of what P5a was for.
+**Resolved on 2026-09-19: a self-signed certificate authority, generated in Terraform, in every environment.** The blocker is therefore closed before Task 4 builds the Redis, and `cluster-allow-insecure-redis` is never exposed as a module variable.
 
-Three ways out. Pick one and record why:
+What was rejected, and why, so it is not revisited:
 
-1. **Give Redis a certificate.** `redis.conf` gains `tls-port 6380`, `port 0`, and a certificate from cert-manager if it is present in the cluster, or a self-signed one mounted from a Secret. Lettuce then connects with `rediss://`. Verify cert-manager's presence first: `kubectl get crd certificates.cert-manager.io`.
-2. **Use a managed Redis with TLS.** ElastiCache with in-transit encryption gives `rediss://` and a stable endpoint, and it also answers Task 7 outright. There is no ElastiCache anywhere in `infra-aws` today, so this is a new component with its own cost and its own Terraform.
-3. **Accept plaintext inside the cluster**, with the opt-out set only where a NetworkPolicy is genuinely enforced. **This one is currently not available**: P5a measured devqa's CNI running `--enable-network-policy=false`, so the NetworkPolicy is accepted by the API server and enforced by nothing. Taking this option requires fixing that first, and the fix is cluster-wide.
+- **The ACM certificate the module already holds** cannot be used. `data "aws_acm_certificate" "ingress"` hands an ARN to the ALB, which works because AWS holds the private key and terminates TLS itself. ACM public certificates are not exportable, and Redis needs `tls-cert-file` and `tls-key-file` on disk. This is a dead end, not a configuration gap.
+- **AWS Private CA** would work — it exports a key — but costs roughly $400 per month per CA plus issuance, for a certificate nothing outside the namespace will ever validate.
+- **cert-manager** is not installed: `kubectl get crd` returns no `cert-manager.io` resources on devqa, and `infra-aws/modules/addons` contains only `external-secrets` and `sealed-secrets`. That route would add a cluster-wide addon first.
+- **ElastiCache with in-transit encryption** remains the option that would remove both the certificate plumbing and the Sentinel question at once, and needs no application change. It is recorded as a future option for production rather than chosen now. If it is ever adopted it must be **cluster mode disabled** — `RedisClusterStore` builds a `RedisClient`, and `acquireSeats` passes one key per limit-bearing index to a single `EVAL`, which spans hash slots and is rejected with `CROSSSLOT`.
 
-- [ ] **Step 1: Resolve it, and write down which and why**
+**The trap this avoids.** The obvious way to make Guacamole trust a private CA is `JAVA_OPTS=-Djavax.net.ssl.trustStore=...`, and it is wrong: that *replaces* the default truststore, which also governs SAML identity provider metadata retrieval and every other outbound HTTPS call. Login would break, and it would look like a Redis change. Trust is therefore scoped to the Redis client through Lettuce's `SslOptions.trustManager(File)`, which accepts a PEM directly — verified against the Lettuce 6.3.2 jar rather than assumed — and is wired to the `cluster-redis-ca-cert` property.
+
+- [ ] **Step 1: Confirm the certificate chain reaches the pods**
+
+The certificates are generated in Task 4. Confirm here that Redis is serving TLS and that Guacamole verifies it rather than skipping verification:
+
+```bash
+kubectl --context devqa -n <namespace> exec redis-0 -- \
+    redis-cli --tls --cacert /etc/redis/tls/ca.crt --user guacamole ping
+kubectl --context devqa -n <namespace> logs deploy/guacamole | grep "authenticated, encrypted"
+```
+
+**Expected:** `PONG`, and the P5a posture line reporting an authenticated, encrypted Redis — which is only reachable when `ClusterSecurityPolicy` accepted the URI without the opt-out.
 
 - [ ] **Step 2: Deploy to devqa through Terraform, not by hand**
 

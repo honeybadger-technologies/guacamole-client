@@ -23,10 +23,12 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.SslOptions;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
+import java.io.File;
 import java.util.ArrayList;
 import java.time.Duration;
 import java.util.Collection;
@@ -134,6 +136,28 @@ public class RedisClusterStore implements ClusterStore {
      *     Identity of this replica.
      */
     public RedisClusterStore(String redisUri, long staleWindowMs, String nodeId) {
+        this(redisUri, staleWindowMs, nodeId, null);
+    }
+
+    /**
+     * Creates a store which verifies the Redis server against a private
+     * certificate authority.
+     *
+     * @param redisUri
+     *     The Lettuce URI of the Redis server.
+     *
+     * @param staleWindowMs
+     *     Milliseconds after which an unrefreshed entry is considered dead.
+     *
+     * @param nodeId
+     *     The identity of this replica.
+     *
+     * @param caCertificatePath
+     *     Path to a PEM certificate authority the Redis server's certificate
+     *     is signed by, or null to use the JVM's default trust.
+     */
+    public RedisClusterStore(String redisUri, long staleWindowMs, String nodeId,
+            String caCertificatePath) {
 
         // The timeout belongs on the URI; AbstractRedisClient.setDefaultTimeout
         // is deprecated, and this module compiles with -Werror.
@@ -147,9 +171,29 @@ public class RedisClusterStore implements ClusterStore {
         // minutes instead of degrading -- measured at over 180 seconds on a
         // live cluster. Rejecting immediately is what makes the documented
         // fallback to per-replica limits actually reachable.
-        client.setOptions(ClientOptions.builder()
-                .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
-                .build());
+        ClientOptions.Builder options = ClientOptions.builder()
+                .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS);
+
+        // Trust is scoped to this client rather than added to the JVM's
+        // default truststore, which also governs every other outbound HTTPS
+        // call the deployment makes -- SAML identity provider metadata
+        // included.
+        if (caCertificatePath != null && !caCertificatePath.isEmpty()) {
+
+            File caCertificate = new File(caCertificatePath);
+            if (!caCertificate.isFile() || !caCertificate.canRead())
+                throw new IllegalArgumentException("The configured Redis "
+                        + "certificate authority \"" + caCertificatePath + "\" is "
+                        + "not a readable file. Clustering would fail every "
+                        + "connection rather than start insecurely.");
+
+            options.sslOptions(SslOptions.builder()
+                    .trustManager(caCertificate)
+                    .build());
+
+        }
+
+        client.setOptions(options.build());
 
         this.staleWindowMs = staleWindowMs;
         this.nodeId = nodeId;

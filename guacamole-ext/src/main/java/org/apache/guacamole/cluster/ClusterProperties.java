@@ -81,6 +81,24 @@ public class ClusterProperties {
     };
 
     /**
+     * Path to a PEM certificate authority the Redis server's certificate is
+     * signed by.
+     *
+     * Needed only for a privately issued certificate. Trust is applied to the
+     * Redis client alone, never to the JVM's default truststore, which also
+     * governs SAML metadata retrieval and every other outbound HTTPS call.
+     */
+    public static final StringGuacamoleProperty CLUSTER_REDIS_CA_CERT =
+            new StringGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-redis-ca-cert";
+        }
+
+    };
+
+    /**
      * Whether the Prometheus metrics endpoint is served. Defaults to false.
      */
     public static final BooleanGuacamoleProperty CLUSTER_METRICS_ENABLED =

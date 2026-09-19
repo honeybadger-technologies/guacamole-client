@@ -146,7 +146,8 @@ public class ClusterModule extends AbstractModule {
                 // connected to
                 String posture = ClusterSecurityPolicy.check(uri, allowInsecure);
 
-                store = new RedisClusterStore(uri, staleWindow, resolveNodeId());
+                store = new RedisClusterStore(uri, staleWindow, resolveNodeId(),
+                        environment.getProperty(ClusterProperties.CLUSTER_REDIS_CA_CERT));
                 heartbeat = new ClusterHeartbeat(store, interval);
                 heartbeat.start();
 

@@ -183,6 +183,7 @@ public class AuthenticationService {
 
         String redisUri;
         boolean allowInsecure;
+        String caCertificate;
 
         try {
 
@@ -195,6 +196,9 @@ public class AuthenticationService {
 
             allowInsecure = environment.getProperty(
                     ClusterProperties.CLUSTER_ALLOW_INSECURE_REDIS, false);
+
+            caCertificate = environment.getProperty(
+                    ClusterProperties.CLUSTER_REDIS_CA_CERT);
 
         }
 
@@ -220,7 +224,7 @@ public class AuthenticationService {
             throw new IllegalStateException(e.getMessage(), e);
         }
 
-        return new RedisClusterStore(redisUri, 30000L, "webapp");
+        return new RedisClusterStore(redisUri, 30000L, "webapp", caCertificate);
 
     }
 
