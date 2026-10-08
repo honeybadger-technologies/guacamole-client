@@ -26,6 +26,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.DoubleAdder;
+import java.util.function.Supplier;
 
 /**
  * Every metric the cluster implementation publishes.
@@ -57,6 +60,18 @@ public class ClusterMetrics {
      */
     private static final ConcurrentMap<String, String> names =
             new ConcurrentHashMap<String, String>();
+
+    /**
+     * Gauges whose value is computed each time the metrics are rendered.
+     */
+    private static final ConcurrentMap<String, Supplier<? extends Number>> gaugeFunctions =
+            new ConcurrentHashMap<String, Supplier<? extends Number>>();
+
+    /**
+     * Histograms, by metric name.
+     */
+    private static final ConcurrentMap<String, Histogram> histograms =
+            new ConcurrentHashMap<String, Histogram>();
 
     private ClusterMetrics() {}
 
@@ -103,10 +118,49 @@ public class ClusterMetrics {
     /**
      * Discards every recorded series. Intended only for tests.
      */
+    /**
+     * Registers a gauge whose value is read from the given function each time
+     * the metrics are rendered. A function that throws is omitted from that
+     * render rather than failing the whole response.
+     *
+     * @param name
+     *     The metric name.
+     *
+     * @param function
+     *     Supplies the current value.
+     */
+    public static void gaugeFunction(String name, Supplier<? extends Number> function) {
+        gaugeFunctions.put(name, function);
+    }
+
+    /**
+     * Records one observation in a histogram, creating it with the given
+     * bucket upper bounds on first use. Later calls reuse the original bounds.
+     *
+     * @param name
+     *     The metric name, without the _bucket/_sum/_count suffix.
+     *
+     * @param buckets
+     *     Ascending bucket upper bounds; +Inf is implicit.
+     *
+     * @param value
+     *     The observed value.
+     */
+    public static void histogram(String name, double[] buckets, double value) {
+        Histogram histogram = histograms.get(name);
+        if (histogram == null) {
+            histograms.putIfAbsent(name, new Histogram(buckets));
+            histogram = histograms.get(name);
+        }
+        histogram.observe(value);
+    }
+
     public static void reset() {
         counters.clear();
         gauges.clear();
         names.clear();
+        gaugeFunctions.clear();
+        histograms.clear();
     }
 
     /**
@@ -146,6 +200,27 @@ public class ClusterMetrics {
             text.append(key).append(' ')
                     .append(format(gauges.get(key).doubleValue())).append('\n');
         }
+
+        List<String> functionNames = new ArrayList<String>(gaugeFunctions.keySet());
+        Collections.sort(functionNames);
+        for (String name : functionNames) {
+            Number value;
+            try {
+                value = gaugeFunctions.get(name).get();
+            }
+            catch (RuntimeException e) {
+                continue;
+            }
+            if (value == null)
+                continue;
+            text.append("# TYPE ").append(name).append(" gauge\n");
+            text.append(name).append(' ').append(format(value.doubleValue())).append('\n');
+        }
+
+        List<String> histogramNames = new ArrayList<String>(histograms.keySet());
+        Collections.sort(histogramNames);
+        for (String name : histogramNames)
+            histograms.get(name).render(name, text);
 
         return text.toString();
 
@@ -203,6 +278,56 @@ public class ClusterMetrics {
         if (value == Math.rint(value) && !Double.isInfinite(value))
             return Long.toString((long) value);
         return Double.toString(value);
+    }
+
+    /**
+     * A fixed-bucket histogram in the Prometheus exposition format.
+     */
+    private static class Histogram {
+
+        private final double[] bounds;
+
+        /**
+         * Observations per bucket, not cumulative; the last slot is +Inf.
+         */
+        private final AtomicLongArray counts;
+
+        private final DoubleAdder sum = new DoubleAdder();
+
+        private final AtomicLong count = new AtomicLong();
+
+        Histogram(double[] bounds) {
+            this.bounds = bounds.clone();
+            this.counts = new AtomicLongArray(bounds.length + 1);
+        }
+
+        void observe(double value) {
+            int slot = bounds.length;
+            for (int i = 0; i < bounds.length; i++) {
+                if (value <= bounds[i]) {
+                    slot = i;
+                    break;
+                }
+            }
+            counts.incrementAndGet(slot);
+            sum.add(value);
+            count.incrementAndGet();
+        }
+
+        void render(String name, StringBuilder text) {
+            text.append("# TYPE ").append(name).append(" histogram\n");
+            long cumulative = 0;
+            for (int i = 0; i < bounds.length; i++) {
+                cumulative += counts.get(i);
+                text.append(name).append("_bucket{le=\"").append(format(bounds[i]))
+                        .append("\"} ").append(cumulative).append('\n');
+            }
+            cumulative += counts.get(bounds.length);
+            text.append(name).append("_bucket{le=\"+Inf\"} ").append(cumulative).append('\n');
+            text.append(name).append("_sum ").append(format(sum.sum())).append('\n');
+            text.append(name).append("_count ").append(count.get()).append('\n');
+        }
+
     }
 
 }

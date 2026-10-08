@@ -130,4 +130,44 @@ public class ClusterMetricsTest {
         assertEquals("", ClusterMetrics.render());
     }
 
+    @Test
+    public void rendersAHistogramWithCumulativeBucketsSumAndCount() {
+        double[] buckets = { 60, 300, 900 };
+        ClusterMetrics.histogram("guacamole_connection_duration_seconds", buckets, 30);
+        ClusterMetrics.histogram("guacamole_connection_duration_seconds", buckets, 125);
+        ClusterMetrics.histogram("guacamole_connection_duration_seconds", buckets, 4000);
+
+        String text = ClusterMetrics.render();
+        assertTrue(text.contains("# TYPE guacamole_connection_duration_seconds histogram"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_bucket{le=\"60\"} 1"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_bucket{le=\"300\"} 2"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_bucket{le=\"900\"} 2"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_bucket{le=\"+Inf\"} 3"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_sum 4155"), text);
+        assertTrue(text.contains("guacamole_connection_duration_seconds_count 3"), text);
+    }
+
+    @Test
+    public void evaluatesAGaugeFunctionAtRenderTime() {
+        final int[] value = { 1 };
+        ClusterMetrics.gaugeFunction("guacamole_active_connections", () -> value[0]);
+        value[0] = 7;
+
+        String text = ClusterMetrics.render();
+        assertTrue(text.contains("# TYPE guacamole_active_connections gauge"), text);
+        assertTrue(text.contains("guacamole_active_connections 7"), text);
+    }
+
+    @Test
+    public void omitsAGaugeFunctionThatFails() {
+        ClusterMetrics.gaugeFunction("guacamole_users", () -> {
+            throw new IllegalStateException("database unreachable");
+        });
+        ClusterMetrics.gauge("guacamole_cluster_enabled", 1);
+
+        String text = ClusterMetrics.render();
+        assertFalse(text.contains("guacamole_users"), text);
+        assertTrue(text.contains("guacamole_cluster_enabled 1"), text);
+    }
+
 }
