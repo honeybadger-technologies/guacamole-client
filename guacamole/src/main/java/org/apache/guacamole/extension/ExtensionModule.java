@@ -35,6 +35,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.environment.Environment;
 import org.apache.guacamole.event.EventLoggingListener;
+import org.apache.guacamole.metrics.UsageMetricsListener;
 import org.apache.guacamole.net.auth.AuthenticationProvider;
 import org.apache.guacamole.net.event.listener.Listener;
 import org.apache.guacamole.properties.StringSetProperty;
@@ -605,6 +606,7 @@ public class ExtensionModule extends ServletModule {
         // Always bind default file-driven auth and event logging last
         bindAuthenticationProvider(FileAuthenticationProvider.class, toleratedAuthProviders);
         bindListener(EventLoggingListener.class);
+        bindListener(UsageMetricsListener.class);
 
         // Dynamically generate app.js and app.css from extensions
         serve("/app.js").with(new ResourceServlet(new SequenceResource(javaScriptResources)));
