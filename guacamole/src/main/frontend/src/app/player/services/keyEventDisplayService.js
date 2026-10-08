@@ -286,7 +286,7 @@ angular.module('player').factory('keyEventDisplayService',
                 const { keysym, name, value } = definition;
 
                 // Track modifier state
-                if (MODIFIER_KEYS[keysym]) {
+                if (Guacamole.Keyboard.Keysym.isModifier(keysym)) {
                     if (pressed)
                         pressedKeys[keysym] = definition;
                     else

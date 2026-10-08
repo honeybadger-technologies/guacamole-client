@@ -81,6 +81,55 @@ public class ClusterProperties {
     };
 
     /**
+     * Path to a PEM certificate authority the Redis server's certificate is
+     * signed by.
+     *
+     * Needed only for a privately issued certificate. Trust is applied to the
+     * Redis client alone, never to the JVM's default truststore, which also
+     * governs SAML metadata retrieval and every other outbound HTTPS call.
+     */
+    public static final StringGuacamoleProperty CLUSTER_REDIS_CA_CERT =
+            new StringGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-redis-ca-cert";
+        }
+
+    };
+
+    /**
+     * Whether the Prometheus metrics endpoint is served. Defaults to false.
+     */
+    public static final BooleanGuacamoleProperty CLUSTER_METRICS_ENABLED =
+            new BooleanGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-metrics-enabled";
+        }
+
+    };
+
+    /**
+     * Bearer token required by the metrics endpoint.
+     *
+     * The endpoint cannot require a Guacamole session, because a scraper does
+     * not have one, and it cannot be open, because the Ingress routes every
+     * path to this application. Enabling metrics without a token is refused at
+     * startup.
+     */
+    public static final StringGuacamoleProperty CLUSTER_METRICS_TOKEN =
+            new StringGuacamoleProperty() {
+
+        @Override
+        public String getName() {
+            return "cluster-metrics-token";
+        }
+
+    };
+
+    /**
      * Identity of this replica. Defaults to the HOSTNAME environment variable
      * plus a random suffix.
      */

@@ -21,6 +21,7 @@
 package org.apache.guacamole.cluster;
 
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -95,6 +96,37 @@ public class ClusterSecurityPolicyTest {
     public void anUnparseableUriIsRefusedRatherThanAssumedSafe() {
         assertThrows(GuacamoleException.class,
                 () -> ClusterSecurityPolicy.check("not-a-uri", false));
+    }
+
+
+    @Test
+    public void publishesTheInsecureGauge() throws Exception {
+
+        ClusterMetrics.reset();
+        ClusterSecurityPolicy.check("rediss://guacamole:secret@redis:6379", false);
+        assertTrue(ClusterMetrics.render().contains(
+                "guacamole_cluster_redis_insecure 0"), ClusterMetrics.render());
+
+        ClusterMetrics.reset();
+        ClusterSecurityPolicy.check("redis://redis:6379", true);
+        assertTrue(ClusterMetrics.render().contains(
+                "guacamole_cluster_redis_insecure 1"), ClusterMetrics.render());
+
+    }
+
+    @Test
+    public void publishesTheInsecureGaugeEvenWhenRefusing() {
+
+        ClusterMetrics.reset();
+
+        assertThrows(GuacamoleException.class,
+                () -> ClusterSecurityPolicy.check("redis://redis:6379", false));
+
+        // A refused start lives only seconds, but reporting 0 for it would be
+        // a lie in whichever scrape caught it
+        assertTrue(ClusterMetrics.render().contains(
+                "guacamole_cluster_redis_insecure 1"), ClusterMetrics.render());
+
     }
 
 }

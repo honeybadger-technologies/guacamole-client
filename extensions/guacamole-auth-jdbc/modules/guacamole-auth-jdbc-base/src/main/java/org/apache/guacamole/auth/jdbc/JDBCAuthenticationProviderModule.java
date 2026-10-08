@@ -92,6 +92,7 @@ import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserMapper;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.auth.jdbc.cluster.ClusterModule;
+import org.apache.guacamole.auth.jdbc.cluster.InventoryMetrics;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupParentUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupService;
 import org.mybatis.guice.MyBatisModule;
@@ -199,6 +200,7 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         bind(SaltService.class).to(SecureRandomSaltService.class);
         // Cluster coordination (no-op unless cluster-enabled is true)
         install(new ClusterModule(environment));
+        bind(InventoryMetrics.class).asEagerSingleton();
 
         // Share keys cross replicas only when clustering is on. A property that
         // cannot be read degrades to single-replica sharing rather than failing

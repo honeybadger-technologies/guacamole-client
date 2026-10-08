@@ -153,7 +153,7 @@ angular.module('import').factory('connectionParseService',
         connectionGroupService.getConnectionGroupTree(dataSource).then(
                 rootGroup => {
 
-            const lookups = new TreeLookups({});
+            const lookups = TreeLookups({});
 
             // Add the specified group to the lookup, appending all specified
             // prefixes, and then recursively call saveLookups for all children
