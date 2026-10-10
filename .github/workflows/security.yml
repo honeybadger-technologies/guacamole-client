@@ -30,13 +30,34 @@ jobs:
         with:
           persist-credentials: false
 
+      # Trivy resolves transitive POMs from ~/.m2 before Maven Central; a cold
+      # runner fetching them all from Central gets rate-limited (HTTP 429)
+      - name: Set up a JDK with a cached Maven repository
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Prefetch the Maven dependency tree
+        run: >-
+          mvn -B -q
+          org.apache.maven.plugins:maven-dependency-plugin:3.8.1:go-offline
+          -Daether.connector.http.retryHandler.count=5
+          -Dexec.skip=true -Dskip.npm -Dskip.installnodenpm
+
       # The frontend lockfile is skipped here on purpose: it is build-time
       # tooling that never reaches the runtime image, and the image scan below
       # is the check for what actually ships. Gating merges on upstream's
       # devDependencies would make the gate unpassable, and a gate nobody can
       # go green on gets switched off.
+      # Offline: resolve POMs only from the prefetched ~/.m2. Trivy would
+      # otherwise query Central for this reactor's own unpublished modules,
+      # and a 429 there is fatal
       - name: Scan the Maven dependency tree
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           version: v0.75.0
           scan-type: fs

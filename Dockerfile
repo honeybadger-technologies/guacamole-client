@@ -58,9 +58,9 @@ RUN apt-get update && apt-get install -y firefox
 ARG MAVEN_ARGUMENTS="-DskipTests=false"
 
 # Versions of JDBC drivers to bundle within image
-ARG MSSQL_JDBC_VERSION=9.4.1
+ARG MSSQL_JDBC_VERSION=13.6.0
 ARG MYSQL_JDBC_VERSION=9.3.0
-ARG PGSQL_JDBC_VERSION=42.7.7
+ARG PGSQL_JDBC_VERSION=42.7.14
 
 # Build environment variables
 ENV \
