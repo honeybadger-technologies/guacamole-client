@@ -43,6 +43,9 @@
         <!-- Base JDBC classes -->
         <module>modules/guacamole-auth-jdbc-base</module>
 
+        <!-- Optional AWS KMS key provider (bundled into the database modules) -->
+        <module>modules/guacamole-auth-jdbc-kms</module>
+
         <!-- Database-specific implementations -->
         <module>modules/guacamole-auth-jdbc-mysql</module>
         <module>modules/guacamole-auth-jdbc-postgresql</module>

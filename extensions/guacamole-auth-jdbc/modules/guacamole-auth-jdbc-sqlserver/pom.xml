@@ -50,6 +50,13 @@
             <artifactId>guacamole-auth-jdbc-base</artifactId>
             <version>${revision}</version>
         </dependency>
+
+        <!-- Optional AWS KMS key provider -->
+        <dependency>
+            <groupId>org.apache.guacamole</groupId>
+            <artifactId>guacamole-auth-jdbc-kms</artifactId>
+            <version>${revision}</version>
+        </dependency>
 </dependencies>
 
 </project>
