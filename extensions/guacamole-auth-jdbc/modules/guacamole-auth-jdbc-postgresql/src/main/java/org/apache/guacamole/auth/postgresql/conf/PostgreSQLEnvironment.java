@@ -165,6 +165,31 @@ public class PostgreSQLEnvironment extends JDBCEnvironment {
             PBKDF2PasswordHasher.DEFAULT_ITERATIONS
         );
     }
+
+    @Override
+    public String getParameterEncryptionKeys() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PARAMETER_ENCRYPTION_KEYS);
+    }
+
+    @Override
+    public String getParameterEncryptionCurrentKey() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PARAMETER_ENCRYPTION_CURRENT_KEY);
+    }
+
+    @Override
+    public String getParameterEncryptionProvider() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PARAMETER_ENCRYPTION_PROVIDER, "property");
+    }
+
+    @Override
+    public String getParameterEncryptionMode() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PARAMETER_ENCRYPTION_MODE, "encrypt");
+    }
+
+    @Override
+    public String getParameterEncryptionExtraNames() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PARAMETER_ENCRYPTION_EXTRA_NAMES);
+    }
     
     @Override
     public int getDefaultMaxConnections() throws GuacamoleException {
