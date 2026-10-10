@@ -81,6 +81,18 @@ public abstract class JDBCEnvironment extends DelegatingEnvironment {
     public abstract int getBatchSize() throws GuacamoleException;
 
     /**
+     * Returns the number of PBKDF2 iterations to use when hashing user
+     * passwords.
+     *
+     * @return
+     *     The number of PBKDF2 iterations to use when hashing passwords.
+     *
+     * @throws GuacamoleException
+     *     If guacamole.properties cannot be parsed.
+     */
+    public abstract int getPasswordHashIterations() throws GuacamoleException;
+
+    /**
      * Returns the default maximum number of concurrent connections to allow to
      * any one connection, unless specified differently on an individual
      * connection. Zero denotes unlimited.

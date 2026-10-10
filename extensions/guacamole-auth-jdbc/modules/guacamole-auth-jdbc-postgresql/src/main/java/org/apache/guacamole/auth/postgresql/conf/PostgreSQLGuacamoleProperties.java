@@ -314,6 +314,19 @@ public class PostgreSQLGuacamoleProperties {
         public String getName() { return "postgresql-batch-size"; }
 
     };
+
+    /**
+     * The number of PBKDF2 iterations to use when hashing passwords. Existing
+     * hashes using fewer iterations are rehashed upon the user's next
+     * successful login.
+     */
+    public static final IntegerGuacamoleProperty POSTGRESQL_PASSWORD_HASH_ITERATIONS =
+            new IntegerGuacamoleProperty() {
+
+        @Override
+        public String getName() { return "postgresql-password-hash-iterations"; }
+
+    };
     
     /**
      * A property used to configure whether or not usernames within the Postgres

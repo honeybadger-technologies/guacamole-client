@@ -22,6 +22,7 @@ package org.apache.guacamole.auth.postgresql.conf;
 import java.io.File;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.auth.jdbc.JDBCEnvironment;
+import org.apache.guacamole.net.auth.PBKDF2PasswordHasher;
 import org.apache.guacamole.auth.jdbc.security.PasswordPolicy;
 import org.apache.ibatis.session.SqlSession;
 
@@ -157,6 +158,13 @@ public class PostgreSQLEnvironment extends JDBCEnvironment {
             DEFAULT_BATCH_SIZE
         );
     }    
+
+    @Override
+    public int getPasswordHashIterations() throws GuacamoleException {
+        return getProperty(PostgreSQLGuacamoleProperties.POSTGRESQL_PASSWORD_HASH_ITERATIONS,
+            PBKDF2PasswordHasher.DEFAULT_ITERATIONS
+        );
+    }
     
     @Override
     public int getDefaultMaxConnections() throws GuacamoleException {
