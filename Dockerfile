@@ -60,7 +60,7 @@ ARG MAVEN_ARGUMENTS="-DskipTests=false"
 # Versions of JDBC drivers to bundle within image
 ARG MSSQL_JDBC_VERSION=9.4.1
 ARG MYSQL_JDBC_VERSION=9.3.0
-ARG PGSQL_JDBC_VERSION=42.7.7
+ARG PGSQL_JDBC_VERSION=42.7.14
 
 # Build environment variables
 ENV \
