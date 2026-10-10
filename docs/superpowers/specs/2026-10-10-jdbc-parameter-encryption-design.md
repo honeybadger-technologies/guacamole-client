@@ -36,13 +36,14 @@ All in `guacamole-auth-jdbc-base` unless noted.
 | `PropertyParameterKeyProvider` | Default provider. Reads the keyring from properties (§7). No keys configured = feature off. |
 | `KmsParameterKeyProvider` | **Separate optional module** (`guacamole-auth-jdbc-kms`, not part of the upstream contribution). Same keyring properties, but each value is a data key encrypted by AWS KMS. Each is unwrapped once at startup with KMS `Decrypt`, using the ambient AWS credentials (e.g. IRSA), and the plain keys are held only in memory. |
 | `ParameterCipher` | AES-256-GCM, 96-bit random IV, 128-bit tag. Associated data: `owner-type ‖ owner-id ‖ parameter-name`. Stored form: `base64(IV ‖ ciphertext ‖ tag)`. |
-| `SecretParameterPolicy` | `isSecret(protocol, parameterName)`. True for any field of type `PASSWORD` in the loaded protocol descriptors; for `private-key`, `sftp-private-key` and `client-key`; and for any name in the `*-parameter-encryption-extra-names` property. |
+| `SecretParameterPolicy` | `isSecret(parameterName)`. True for the name of any field of type `PASSWORD` in any loaded protocol descriptor (connection and sharing-profile forms); for `private-key`, `sftp-private-key`, `client-key`; and for names in `*-parameter-encryption-extra-names`. Independent of protocol: parameter names mean the same thing in every protocol, so no protocol lookup is needed at write or sweep time. |
 | `ParameterEncryptionService` | The only entry point used by the services: `encrypt(models)` before insert, `decrypt(models)` after select. |
 | `ParameterEncryptionSweep` | Background startup task that encrypts, re-keys or decrypts existing rows (§6). |
 
 **Integration points.** These are the only call sites that read or write parameter rows:
-- `ConnectionService`: parameter inserts in `createObject`/`updateObject`, and `retrieveParameters`.
+- `ConnectionService`: parameter inserts in `createObject`/`updateObject`; `retrieveParameters` (REST/admin read).
 - `SharingProfileService`: the same three operations.
+- `AbstractGuacamoleTunnelService.getGuacamoleConfiguration`: reads connection and sharing-profile parameters straight from the mappers when a session is opened. This is the read that reaches guacd.
 
 `ConnectionParameterModel` and `SharingProfileParameterModel` gain an `encryption` (key ID) field.
 
@@ -87,7 +88,9 @@ parameterMapper.select(id)
   → GuacamoleConfiguration → parameter tokens → guacd
 ```
 
-**Failure rule.** A row that cannot be decrypted fails only the connection or sharing profile that owns it. The error and log name the owner, the parameter name and the key ID, never the value. Ciphertext is never passed on as if it were a password.
+**Failure rule.** A row that cannot be decrypted (missing key, tag mismatch):
+- **Session path** (tunnel): opening that connection or sharing profile fails with `GuacamoleServerException`. The message names the owner, the parameter and the key ID, never the value. Ciphertext is never passed to guacd.
+- **Admin/REST path** (`retrieveParameters`, which cannot throw): the parameter is omitted from the returned map and an ERROR is logged with the same details. An administrator who saves the connection afterwards writes it without that value. The value was unrecoverable anyway, and the earlier ERROR records why.
 
 **Compatibility with older versions**
 - An older version that re-saves a connection writes plain-text rows with `parameter_encryption` NULL. That is correct.
@@ -98,11 +101,11 @@ parameterMapper.select(id)
 
 The sweep runs in the background after startup, only when a key provider is configured. It never blocks readiness: reads already handle both plain-text and encrypted rows.
 
-- **Candidate rows:** `parameter_encryption IS NULL OR parameter_encryption <> currentKeyId`. Rows are joined to the owning connection's protocol; for sharing profiles, that is the primary connection's protocol. `SecretParameterPolicy` then filters them in Java.
+- **Candidate rows:** `parameter_encryption IS NULL OR parameter_encryption <> currentKeyId`. Secret names are passed to the query (`parameter_name IN (…)`), so no protocol join is needed.
 - **Write is a compare-and-set:**
   `UPDATE … SET parameter_value = :new, parameter_encryption = :kid WHERE <primary key> AND parameter_value = :old AND parameter_encryption IS NOT DISTINCT FROM :oldKid`. SQL Server and MySQL use equivalent NULL-safe comparisons.
   - Concurrent sweeps on several replicas, or an admin saving mid-sweep, make the losing update affect 0 rows. No database lock is needed, and the code path is identical on all three databases.
-- **Batches** of 100 rows per transaction.
+- **Each row is its own compare-and-set statement**, so no transaction spans rows; progress is logged every 100 rows.
 - **Errors:** a failing row is logged (owner, parameter name, key ID) and skipped; the sweep continues.
 - **Summary:** one INFO line, `encrypted N, re-keyed M, decrypted D, skipped K, failed F, remaining plain-text secrets R`.
 
