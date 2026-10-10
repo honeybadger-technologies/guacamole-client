@@ -43,6 +43,18 @@ public class PasswordRecordModel {
     private byte[] passwordSalt;
 
     /**
+     * The name of the algorithm used to produce the password hash, or null
+     * if the hash is a legacy salted SHA-256 hash.
+     */
+    private String passwordHashAlgorithm;
+
+    /**
+     * The number of iterations used to produce the password hash, or null if
+     * the hash is a legacy salted SHA-256 hash.
+     */
+    private Integer passwordHashIterations;
+
+    /**
      * The date and time when this password was first set for the associated
      * user.
      */
@@ -65,6 +77,8 @@ public class PasswordRecordModel {
         this.userID = user.getObjectID();
         this.passwordHash = user.getPasswordHash();
         this.passwordSalt = user.getPasswordSalt();
+        this.passwordHashAlgorithm = user.getPasswordHashAlgorithm();
+        this.passwordHashIterations = user.getPasswordHashIterations();
         this.passwordDate = user.getPasswordDate();
     }
 
@@ -128,6 +142,50 @@ public class PasswordRecordModel {
      */
     public void setPasswordSalt(byte[] passwordSalt) {
         this.passwordSalt = passwordSalt;
+    }
+
+    /**
+     * Returns the name of the algorithm used to produce the password hash.
+     *
+     * @return
+     *     The name of the algorithm used to produce the password hash, or
+     *     null if the hash is a legacy salted SHA-256 hash.
+     */
+    public String getPasswordHashAlgorithm() {
+        return passwordHashAlgorithm;
+    }
+
+    /**
+     * Sets the name of the algorithm used to produce the password hash.
+     *
+     * @param passwordHashAlgorithm
+     *     The name of the algorithm used to produce the password hash, or
+     *     null if the hash is a legacy salted SHA-256 hash.
+     */
+    public void setPasswordHashAlgorithm(String passwordHashAlgorithm) {
+        this.passwordHashAlgorithm = passwordHashAlgorithm;
+    }
+
+    /**
+     * Returns the number of iterations used to produce the password hash.
+     *
+     * @return
+     *     The number of iterations used to produce the password hash, or
+     *     null if the hash is a legacy salted SHA-256 hash.
+     */
+    public Integer getPasswordHashIterations() {
+        return passwordHashIterations;
+    }
+
+    /**
+     * Sets the number of iterations used to produce the password hash.
+     *
+     * @param passwordHashIterations
+     *     The number of iterations used to produce the password hash, or
+     *     null if the hash is a legacy salted SHA-256 hash.
+     */
+    public void setPasswordHashIterations(Integer passwordHashIterations) {
+        this.passwordHashIterations = passwordHashIterations;
     }
 
     /**

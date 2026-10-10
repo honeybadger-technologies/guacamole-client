@@ -32,6 +32,8 @@
         <result column="name"                property="identifier"         jdbcType="VARCHAR"/>
         <result column="password_hash"       property="passwordHash"       jdbcType="BINARY"/>
         <result column="password_salt"       property="passwordSalt"       jdbcType="BINARY"/>
+        <result column="password_hash_algorithm"  property="passwordHashAlgorithm"  jdbcType="VARCHAR"/>
+        <result column="password_hash_iterations" property="passwordHashIterations" jdbcType="INTEGER"/>
         <result column="password_date"       property="passwordDate"       jdbcType="TIMESTAMP"/>
         <result column="disabled"            property="disabled"           jdbcType="INTEGER"/>
         <result column="expired"             property="expired"            jdbcType="INTEGER"/>
@@ -116,6 +118,8 @@
             [guacamole_entity].name,
             password_hash,
             password_salt,
+            password_hash_algorithm,
+            password_hash_iterations,
             password_date,
             disabled,
             expired,
@@ -204,6 +208,8 @@
             [guacamole_entity].name,
             password_hash,
             password_salt,
+            password_hash_algorithm,
+            password_hash_iterations,
             password_date,
             disabled,
             expired,
@@ -303,6 +309,8 @@
             [guacamole_entity].name,
             password_hash,
             password_salt,
+            password_hash_algorithm,
+            password_hash_iterations,
             password_date,
             disabled,
             expired,
@@ -380,6 +388,8 @@
             entity_id,
             password_hash,
             password_salt,
+            password_hash_algorithm,
+            password_hash_iterations,
             password_date,
             disabled,
             expired,
@@ -397,6 +407,8 @@
             #{object.entityID,jdbcType=VARCHAR},
             #{object.passwordHash,jdbcType=BINARY},
             #{object.passwordSalt,jdbcType=BINARY},
+            #{object.passwordHashAlgorithm,jdbcType=VARCHAR},
+            #{object.passwordHashIterations,jdbcType=INTEGER},
             #{object.passwordDate,jdbcType=TIMESTAMP},
             #{object.disabled,jdbcType=INTEGER},
             #{object.expired,jdbcType=INTEGER},
@@ -418,6 +430,8 @@
         UPDATE [guacamole_user]
         SET password_hash = #{object.passwordHash,jdbcType=BINARY},
             password_salt = #{object.passwordSalt,jdbcType=BINARY},
+            password_hash_algorithm = #{object.passwordHashAlgorithm,jdbcType=VARCHAR},
+            password_hash_iterations = #{object.passwordHashIterations,jdbcType=INTEGER},
             password_date = #{object.passwordDate,jdbcType=TIMESTAMP},
             disabled = #{object.disabled,jdbcType=INTEGER},
             expired = #{object.expired,jdbcType=INTEGER},
