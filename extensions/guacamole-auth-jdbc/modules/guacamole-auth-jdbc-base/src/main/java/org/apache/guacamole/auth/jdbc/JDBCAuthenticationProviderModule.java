@@ -39,6 +39,7 @@ import org.apache.guacamole.auth.jdbc.user.UserMapper;
 import org.apache.guacamole.auth.jdbc.connectiongroup.ConnectionGroupService;
 import org.apache.guacamole.auth.jdbc.connection.ConnectionService;
 import org.apache.guacamole.auth.jdbc.tunnel.GuacamoleTunnelService;
+import org.apache.guacamole.auth.jdbc.reset.PasswordResetService;
 import org.apache.guacamole.auth.jdbc.reset.PasswordResetTokenMapper;
 import org.apache.guacamole.auth.jdbc.security.PasswordEncryptionService;
 import org.apache.guacamole.auth.jdbc.security.PBKDF2PasswordEncryptionService;
@@ -199,6 +200,7 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         bind(GuacamoleTunnelService.class).to(RestrictedGuacamoleTunnelService.class);
         bind(PasswordEncryptionService.class).to(PBKDF2PasswordEncryptionService.class);
         bind(PasswordPolicyService.class);
+        bind(PasswordResetService.class);
         bind(SaltService.class).to(SecureRandomSaltService.class);
         // Cluster coordination (no-op unless cluster-enabled is true)
         install(new ClusterModule(environment));
