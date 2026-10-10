@@ -304,6 +304,19 @@ public class MySQLGuacamoleProperties {
     };
 
     /**
+     * The number of PBKDF2 iterations to use when hashing passwords. Existing
+     * hashes using fewer iterations are rehashed upon the user's next
+     * successful login.
+     */
+    public static final IntegerGuacamoleProperty MYSQL_PASSWORD_HASH_ITERATIONS =
+            new IntegerGuacamoleProperty() {
+
+        @Override
+        public String getName() { return "mysql-password-hash-iterations"; }
+
+    };
+
+    /**
      * The absolute path to the public key for the server being connected to, if any.
      */
     public static final StringGuacamoleProperty MYSQL_SERVER_RSA_PUBLIC_KEY_FILE =
