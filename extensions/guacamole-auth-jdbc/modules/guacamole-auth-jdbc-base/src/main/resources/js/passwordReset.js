@@ -1,0 +1,211 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+
+/*
+ * Plain ES5 only: this file is served as-is, without transpilation.
+ */
+
+/**
+ * Module which adds password reset links to the JDBC extension.
+ */
+angular.module('guacJdbcPasswordReset', ['auth', 'notification', 'rest']);
+
+// Ensure the module is loaded along with the rest of the app
+angular.module('index').requires.push('guacJdbcPasswordReset');
+
+/**
+ * Button on the manage user page which mails the user a password reset link.
+ * Shown only for existing users of a JDBC data source.
+ */
+angular.module('guacJdbcPasswordReset').directive('guacJdbcPasswordResetButton', [
+        function guacJdbcPasswordResetButton() {
+
+    return {
+        restrict : 'E',
+        scope : {
+            dataSource : '=',
+            username   : '=',
+            exists     : '='
+        },
+        template : '<div class="jdbc-password-reset" ng-show="isApplicable()">'
+                 +   '<button type="button" ng-click="send()" ng-disabled="sending">'
+                 +     '{{\'PASSWORD_RESET.ACTION_SEND_LINK\' | translate}}'
+                 +   '</button>'
+                 + '</div>',
+        controller : ['$scope', '$injector', function passwordResetButtonController($scope, $injector) {
+
+            var authenticationService = $injector.get('authenticationService');
+            var guacNotification      = $injector.get('guacNotification');
+
+            /**
+             * The data sources served by the JDBC extension.
+             */
+            var JDBC_DATA_SOURCES = ['postgresql', 'mysql', 'sqlserver'];
+
+            /**
+             * Whether a request is in progress.
+             */
+            $scope.sending = false;
+
+            /**
+             * Returns whether the button applies to the user being edited.
+             *
+             * @returns {Boolean}
+             *     true if the user exists within a JDBC data source.
+             */
+            $scope.isApplicable = function isApplicable() {
+                return !!$scope.exists && JDBC_DATA_SOURCES.indexOf($scope.dataSource) !== -1;
+            };
+
+            /**
+             * Asks the server to mail a reset link to the user.
+             */
+            $scope.send = function send() {
+                $scope.sending = true;
+                authenticationService.request({
+                    method  : 'POST',
+                    url     : 'api/session/ext/' + encodeURIComponent($scope.dataSource) + '/password-reset',
+                    headers : { 'Content-Type' : 'application/x-www-form-urlencoded' },
+                    data    : $.param({ username : $scope.username })
+                })
+                .then(function linkSent() {
+                    guacNotification.showStatus({
+                        title   : 'PASSWORD_RESET.DIALOG_HEADER_SENT',
+                        text    : {
+                            key       : 'PASSWORD_RESET.INFO_LINK_SENT',
+                            variables : { USERNAME : $scope.username }
+                        },
+                        actions : [ guacNotification.ACKNOWLEDGE_ACTION ]
+                    });
+                }, guacNotification.SHOW_REQUEST_ERROR)
+                ['finally'](function requestDone() {
+                    $scope.sending = false;
+                });
+            };
+
+        }]
+    };
+
+}]);
+
+/**
+ * "Forgot password?" link on the login page. Shown only if a JDBC data source
+ * has self-service password reset enabled, which is the case only when its
+ * unauthenticated /api/ext/{dataSource}/password-reset resource exists.
+ */
+angular.module('guacJdbcPasswordReset').directive('guacJdbcForgotPassword', [
+        function guacJdbcForgotPassword() {
+
+    return {
+        restrict : 'E',
+        scope : {},
+        template : '<div class="jdbc-forgot-password" ng-show="dataSource">'
+                 +   '<a href="" ng-hide="formShown || accepted" ng-click="showForm()">'
+                 +     '{{\'PASSWORD_RESET.ACTION_FORGOT_PASSWORD\' | translate}}'
+                 +   '</a>'
+                 +   '<form ng-show="formShown" ng-submit="submit()">'
+                 +     '<p>{{\'PASSWORD_RESET.HELP_FORGOT_PASSWORD\' | translate}}</p>'
+                 +     '<input type="text" name="reset-username" autocomplete="username" ng-model="values.username"'
+                 +       ' placeholder="{{\'LOGIN.FIELD_HEADER_USERNAME\' | translate}}">'
+                 +     '<input type="submit" ng-disabled="submitting || !values.username"'
+                 +       ' value="{{\'PASSWORD_RESET.ACTION_SEND_REQUEST\' | translate}}">'
+                 +   '</form>'
+                 +   '<p class="jdbc-forgot-password-accepted" ng-show="accepted">'
+                 +     '{{\'PASSWORD_RESET.INFO_REQUEST_ACCEPTED\' | translate}}'
+                 +   '</p>'
+                 + '</div>',
+        controller : ['$scope', '$injector', function forgotPasswordController($scope, $injector) {
+
+            var $q             = $injector.get('$q');
+            var requestService = $injector.get('requestService');
+
+            /**
+             * The data sources served by the JDBC extension, in the order
+             * they are probed.
+             */
+            var JDBC_DATA_SOURCES = ['postgresql', 'mysql', 'sqlserver'];
+
+            /**
+             * The JDBC data source accepting self-service requests, or null
+             * if there is none.
+             */
+            $scope.dataSource = null;
+
+            $scope.values = { username : '' };
+            $scope.formShown = false;
+            $scope.submitting = false;
+            $scope.accepted = false;
+
+            /**
+             * Probes the given data source and the ones after it, stopping
+             * at the first with self-service reset enabled.
+             *
+             * @param {Number} index
+             *     The index within JDBC_DATA_SOURCES to probe.
+             */
+            var probe = function probe(index) {
+                if (index >= JDBC_DATA_SOURCES.length)
+                    return;
+                requestService({
+                    method : 'GET',
+                    url    : 'api/ext/' + JDBC_DATA_SOURCES[index] + '/password-reset'
+                })
+                .then(function enabled() {
+                    $scope.dataSource = JDBC_DATA_SOURCES[index];
+                }, function notEnabled() {
+                    probe(index + 1);
+                });
+            };
+
+            probe(0);
+
+            /**
+             * Shows the username form.
+             */
+            $scope.showForm = function showForm() {
+                $scope.formShown = true;
+            };
+
+            /**
+             * Submits the request. The server answers identically whether or
+             * not the account exists, and so does this page.
+             */
+            $scope.submit = function submit() {
+                $scope.submitting = true;
+                requestService({
+                    method  : 'POST',
+                    url     : 'api/ext/' + $scope.dataSource + '/password-reset',
+                    headers : { 'Content-Type' : 'application/x-www-form-urlencoded' },
+                    data    : $.param({ username : $scope.values.username })
+                })
+                ['catch'](function ignored() {
+                    return $q.resolve();
+                })
+                ['finally'](function requestDone() {
+                    $scope.submitting = false;
+                    $scope.formShown = false;
+                    $scope.accepted = true;
+                });
+            };
+
+        }]
+    };
+
+}]);

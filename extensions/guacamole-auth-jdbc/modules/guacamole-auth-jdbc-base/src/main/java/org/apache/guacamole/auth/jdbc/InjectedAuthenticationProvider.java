@@ -94,6 +94,11 @@ public abstract class InjectedAuthenticationProvider
     }
 
     @Override
+    public Object getResource() throws GuacamoleException {
+        return authProviderService.getResource(this);
+    }
+
+    @Override
     public UserContext getUserContext(AuthenticatedUser authenticatedUser)
             throws GuacamoleException {
         return authProviderService.getUserContext(this, authenticatedUser);
