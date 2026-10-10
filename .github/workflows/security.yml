@@ -36,13 +36,14 @@ jobs:
       # devDependencies would make the gate unpassable, and a gate nobody can
       # go green on gets switched off.
       - name: Scan the Maven dependency tree
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: fs
           scan-ref: .
           scanners: vuln
           severity: HIGH,CRITICAL
-          ignorefile: .trivyignore.yaml
+          trivyignores: .trivyignore.yaml
           skip-dirs: guacamole/src/main/frontend
           exit-code: '1'
 
@@ -65,18 +66,20 @@ jobs:
       # extension, and the runtime base image, which is selected by build args
       # rather than pinned by digest
       - name: Scan the image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: image
           image-ref: guacamole-client:scan
           scanners: vuln
           severity: HIGH,CRITICAL
-          ignorefile: .trivyignore.yaml
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Generate an SBOM
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: image
           image-ref: guacamole-client:scan
           format: cyclonedx
