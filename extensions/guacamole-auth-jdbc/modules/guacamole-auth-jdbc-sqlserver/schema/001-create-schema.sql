@@ -218,6 +218,8 @@ CREATE TABLE [guacamole_user] (
     -- Optionally-salted password
     [password_hash] [binary](32)    NOT NULL,
     [password_salt] [binary](32),
+    [password_hash_algorithm]  [nvarchar](32),
+    [password_hash_iterations] [int],
     [password_date] [datetime]      NOT NULL,
 
     -- Account disabled/expired status
@@ -827,6 +829,8 @@ CREATE TABLE [guacamole_user_password_history] (
     -- Salted password
     [password_hash] [binary](32) NOT NULL,
     [password_salt] [binary](32),
+    [password_hash_algorithm]  [nvarchar](32),
+    [password_hash_iterations] [int],
     [password_date] [datetime]   NOT NULL,
 
     CONSTRAINT [PK_guacamole_user_password_history]

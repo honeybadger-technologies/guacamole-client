@@ -112,6 +112,8 @@ CREATE TABLE `guacamole_user` (
   -- Optionally-salted password
   `password_hash` binary(32)   NOT NULL,
   `password_salt` binary(32),
+  `password_hash_algorithm`  varchar(32),
+  `password_hash_iterations` integer,
   `password_date` datetime     NOT NULL,
 
   -- Account disabled/expired status
@@ -602,6 +604,8 @@ CREATE TABLE guacamole_user_password_history (
   -- Salted password
   `password_hash` binary(32) NOT NULL,
   `password_salt` binary(32),
+  `password_hash_algorithm`  varchar(32),
+  `password_hash_iterations` integer,
   `password_date` datetime   NOT NULL,
 
   PRIMARY KEY (`password_history_id`),
