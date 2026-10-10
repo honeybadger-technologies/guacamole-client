@@ -19,12 +19,16 @@
 
 package org.apache.guacamole.auth.jdbc.kms;
 
+import java.time.Duration;
+import java.util.function.Supplier;
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.auth.jdbc.JDBCEnvironment;
 import org.apache.guacamole.auth.jdbc.encryption.Keyring;
 import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProvider;
 import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProviderFactory;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.services.kms.KmsClient;
 import software.amazon.awssdk.services.kms.model.DecryptRequest;
@@ -43,17 +47,41 @@ public class KmsParameterKeyProviderFactory implements ParameterKeyProviderFacto
     @Override
     public ParameterKeyProvider create(JDBCEnvironment environment)
             throws GuacamoleException {
-        try (KmsClient kms = KmsClient.builder()
+        return create(environment.getParameterEncryptionKeys(),
+                environment.getParameterEncryptionCurrentKey(),
+                KmsParameterKeyProviderFactory::buildClient);
+    }
+
+    /** Builds the client with the URL-connection HTTP client and bounded call time. */
+    private static KmsClient buildClient() {
+        return KmsClient.builder()
                 .httpClientBuilder(UrlConnectionHttpClient.builder())
-                .build()) {
+                .overrideConfiguration(ClientOverrideConfiguration.builder()
+                        .apiCallTimeout(Duration.ofSeconds(10))
+                        .apiCallAttemptTimeout(Duration.ofSeconds(3))
+                        .build())
+                .build();
+    }
+
+    /** Test seam: unwraps the keyring using clients from the given supplier. */
+    static ParameterKeyProvider create(String keys, String currentKeyId,
+            Supplier<KmsClient> clientSupplier) throws GuacamoleException {
+        try (KmsClient kms = clientSupplier.get()) {
             return KmsParameterKeyProvider.fromKeyring(
-                    Keyring.parse(environment.getParameterEncryptionKeys(),
+                    Keyring.parse(keys,
                             KmsParameterKeyProvider.decoder(blob -> kms.decrypt(
                                     DecryptRequest.builder()
                                             .ciphertextBlob(SdkBytes.fromByteArray(blob))
                                             .build())
                                     .plaintext().asByteArray())),
-                    environment.getParameterEncryptionCurrentKey());
+                    currentKeyId);
+        }
+        catch (GuacamoleServerException e) {
+            throw e;
+        }
+        catch (RuntimeException e) {
+            throw new GuacamoleServerException("Could not initialise the AWS KMS "
+                    + "client: " + e.getClass().getSimpleName());
         }
     }
 
