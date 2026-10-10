@@ -26,6 +26,7 @@ import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.auth.jdbc.encryption.Keyring;
 import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProvider;
 import org.apache.guacamole.auth.jdbc.encryption.PropertyParameterKeyProvider;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 
 /**
  * Key provider whose keyring values are AWS KMS ciphertext blobs. Each is
@@ -50,9 +51,14 @@ public final class KmsParameterKeyProvider {
                 return unwrap.apply(blob);
             }
             catch (RuntimeException e) {
+                // The error code, never getMessage(): it is safe and actionable.
+                String code = e instanceof AwsServiceException
+                        && ((AwsServiceException) e).awsErrorDetails() != null
+                        ? ((AwsServiceException) e).awsErrorDetails().errorCode() : null;
                 throw new GuacamoleServerException("AWS KMS could not decrypt "
                         + "parameter encryption key \"" + keyId + "\": "
-                        + e.getClass().getSimpleName());
+                        + e.getClass().getSimpleName()
+                        + (code != null ? " (" + code + ")" : ""));
             }
         };
     }

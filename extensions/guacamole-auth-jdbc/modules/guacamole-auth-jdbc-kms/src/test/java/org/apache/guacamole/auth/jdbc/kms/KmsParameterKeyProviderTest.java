@@ -26,6 +26,8 @@ import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.auth.jdbc.encryption.Keyring;
 import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProvider;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.services.kms.model.KmsException;
 
 public class KmsParameterKeyProviderTest {
 
@@ -53,6 +55,22 @@ public class KmsParameterKeyProviderTest {
             })));
         assertTrue(e.getMessage().contains("k1"));
         assertFalse(e.getMessage().contains(wrapped));
+        assertFalse(e.getMessage().contains("AccessDenied"), e.getMessage());
+    }
+
+    @Test
+    public void unwrapFailureIncludesAwsErrorCodeOnly() {
+        String wrapped = Base64.getEncoder().encodeToString(new byte[] { 1 });
+        GuacamoleServerException e = assertThrows(GuacamoleServerException.class,
+            () -> Keyring.parse("k1:" + wrapped, KmsParameterKeyProvider.decoder(blob -> {
+                throw KmsException.builder().message("detail that must not leak")
+                    .awsErrorDetails(AwsErrorDetails.builder()
+                        .errorCode("AccessDeniedException").build())
+                    .build();
+            })));
+        assertTrue(e.getMessage().endsWith("key \"k1\": KmsException (AccessDeniedException)"),
+            e.getMessage());
+        assertFalse(e.getMessage().contains("detail that must not leak"));
     }
 
 }
