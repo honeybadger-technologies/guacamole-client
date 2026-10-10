@@ -4,7 +4,7 @@
 # License: Apache v2.0
 # Source:  https://raw.githubusercontent.com/apache/mina/refs/tags/${VERSION}/NOTICE.txt
 #
-# --- BEGIN LICENSE FILE [2.2.8] ---
+# --- BEGIN LICENSE FILE [2.2.9] ---
 Apache MINA
 Copyright 2007-2023 The Apache Software Foundation.
 
@@ -13,4 +13,4 @@ The Apache Software Foundation (http://www.apache.org/).
 
 Please refer to each LICENSE.<component>.txt file for the
 license terms of the components that Apache MINA depends on.
-# --- END LICENSE FILE [2.2.8] ---
+# --- END LICENSE FILE [2.2.9] ---

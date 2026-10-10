@@ -52,7 +52,7 @@
         <jersey.version>2.48</jersey.version>
         <junit.version>5.14.4</junit.version>
         <lettuce.version>6.3.2.RELEASE</lettuce.version>
-        <mina.version>2.2.8</mina.version>
+        <mina.version>2.2.9</mina.version>
         <netty.version>4.1.137.Final</netty.version>
         <testcontainers.version>1.21.3</testcontainers.version>
         <junit4.version>4.13.2</junit4.version>
