@@ -32,6 +32,34 @@
 #     statement: Why this is accepted here, and what compensates for it.
 #     expired_at: 2026-12-31
 #
-# Nothing is suppressed today.
-
-vulnerabilities: []
+vulnerabilities:
+  - id: CVE-2026-78667
+    paths:
+      - usr/bin/pebble
+    statement: >-
+      Go standard library in /usr/bin/pebble (Canonical Pebble v1.32.2, built with
+      go1.26.7). The binary ships in the official ubuntu:26.04 base image and is
+      inherited through tomcat:9-jdk21; it is not a dpkg package and is not
+      started by this image, so no apt upgrade or dependency bump fixes it.
+      Re-judge when the base image is rebuilt with a Pebble built on Go >= 1.26.9.
+    expired_at: 2026-11-09
+  - id: CVE-2026-78669
+    paths:
+      - usr/bin/pebble
+    statement: >-
+      Go standard library in /usr/bin/pebble (Canonical Pebble v1.32.2, built with
+      go1.26.7). The binary ships in the official ubuntu:26.04 base image and is
+      inherited through tomcat:9-jdk21; it is not a dpkg package and is not
+      started by this image, so no apt upgrade or dependency bump fixes it.
+      Re-judge when the base image is rebuilt with a Pebble built on Go >= 1.26.9.
+    expired_at: 2026-11-09
+  - id: CVE-2026-97031
+    paths:
+      - usr/bin/pebble
+    statement: >-
+      Go standard library in /usr/bin/pebble (Canonical Pebble v1.32.2, built with
+      go1.26.7). The binary ships in the official ubuntu:26.04 base image and is
+      inherited through tomcat:9-jdk21; it is not a dpkg package and is not
+      started by this image, so no apt upgrade or dependency bump fixes it.
+      Re-judge when the base image is rebuilt with a Pebble built on Go >= 1.26.9.
+    expired_at: 2026-11-09
