@@ -37,7 +37,7 @@ All in `guacamole-auth-jdbc-base` unless noted.
 | `KmsParameterKeyProvider` | **Separate optional module** (`guacamole-auth-jdbc-kms`, not part of the upstream contribution). Same keyring properties, but each value is a data key encrypted by AWS KMS. Each is unwrapped once at startup with KMS `Decrypt`, using the ambient AWS credentials (e.g. IRSA), and the plain keys are held only in memory. |
 | `ParameterCipher` | AES-256-GCM, 96-bit random IV, 128-bit tag. Associated data: `owner-type ‖ owner-id ‖ parameter-name`. Stored form: `base64(IV ‖ ciphertext ‖ tag)`. |
 | `SecretParameterPolicy` | `isSecret(parameterName)`. True for the name of any field of type `PASSWORD` in any loaded protocol descriptor (connection and sharing-profile forms); for `private-key`, `sftp-private-key`, `client-key`; and for names in `*-parameter-encryption-extra-names`. Independent of protocol: parameter names mean the same thing in every protocol, so no protocol lookup is needed at write or sweep time. |
-| `ParameterEncryptionService` | The only entry point used by the services: `encrypt(models)` before insert, `decrypt(models)` after select. |
+| `ParameterEncryptionService` | The only entry point used by the services: `protectConnectionParameters(models)` / `protectSharingProfileParameters(models)` before insert; after select, `reveal(...)` on the session path (throws on failure) and `revealOrOmit(...)` on the admin path (omits the value and logs an ERROR). |
 | `ParameterEncryptionSweep` | Background startup task that encrypts, re-keys or decrypts existing rows (§6). |
 
 **Integration points.** These are the only call sites that read or write parameter rows:
@@ -63,6 +63,7 @@ These changes are appended to each database's `schema/upgrade/upgrade-pre-1.6.1.
 - The upgrade is additive: older versions ignore the new column.
 - Widening is needed because a 4096-bit RSA PEM key (~3.2 KB) grows to ~4.4 KB once encrypted and base64-encoded.
 - A secret value whose plain text exceeds **6,000 bytes** is rejected on save with a clear error, so the encrypted form always fits in 8,192 characters. The same limit applies on SQL Server for consistency.
+- **Effective limit.** The existing connection parameter validation already caps every value at 4,096 characters (HTTP 413). The cipher additionally caps secret values at 6,000 UTF-8 bytes (HTTP 400). The second limit matters only for multi-byte text, where 4,096 characters can exceed 6,000 bytes.
 
 ## 5. Data flow
 
@@ -71,7 +72,7 @@ These changes are appended to each database's `schema/upgrade/upgrade-pre-1.6.1.
 ```
 service.create/updateObject
   → getParameterModels(...)                  (owner id known)
-  → ParameterEncryptionService.encrypt(models)
+  → ParameterEncryptionService.protect…Parameters(models)
        secret && key configured → value = b64(IV‖ct‖tag), encryption = currentKeyId
        otherwise                → unchanged, encryption = NULL
   → parameterMapper.insert(models)
@@ -81,10 +82,12 @@ service.create/updateObject
 
 ```
 parameterMapper.select(id)
-  → ParameterEncryptionService.decrypt(models)
+  → ParameterEncryptionService.reveal(...)        (session path)
+    or ParameterEncryptionService.revealOrOmit(...) (admin path)
        encryption NULL → value as stored
        encryption kid  → keyFor(kid) → AES-GCM decrypt with associated data
-                         missing key / tag mismatch → GuacamoleServerException
+                         missing key / tag mismatch → reveal: GuacamoleServerException
+                                                      revealOrOmit: value omitted, ERROR logged
   → GuacamoleConfiguration → parameter tokens → guacd
 ```
 
@@ -93,34 +96,42 @@ parameterMapper.select(id)
 - **Admin/REST path** (`retrieveParameters`, which cannot throw): the parameter is omitted from the returned map and an ERROR is logged with the same details. An administrator who saves the connection afterwards writes it without that value. The value was unrecoverable anyway, and the earlier ERROR records why.
 
 **Compatibility with older versions**
-- An older version that re-saves a connection writes plain-text rows with `parameter_encryption` NULL. That is correct.
-- An older version reading encrypted rows passes ciphertext to the remote server and the login fails. It does not crash.
-- Downgrading after encryption therefore requires `decrypt` mode first (§6).
+- An older version reads the ciphertext as the value. It passes it to the remote server and the login fails; it does not crash.
+- If an administrator saves that connection in the older version, the ciphertext is stored as plain text with `parameter_encryption` NULL. It then becomes the password the newer version sends, and the newer version's sweep encrypts it again as if it were the real secret. The original secret is lost for that connection.
+- Hence: before any older version serves requests, run `decrypt` mode (§6) and confirm the summary reports `remaining encrypted 0`.
 
 ## 6. Startup sweep
 
 The sweep runs in the background after startup, only when a key provider is configured. It never blocks readiness: reads already handle both plain-text and encrypted rows.
 
-- **Candidate rows:** `parameter_encryption IS NULL OR parameter_encryption <> currentKeyId`. Secret names are passed to the query (`parameter_name IN (…)`), so no protocol join is needed.
+When no key provider is configured, the same background task only counts rows with `parameter_encryption IS NOT NULL`. If any exist it logs at ERROR: `<N> stored parameters are encrypted but parameter encryption is not configured; those connections cannot be used.`
+
+- **Candidate rows (encrypt mode):** `(parameter_encryption IS NOT NULL AND parameter_encryption <> currentKeyId) OR (parameter_encryption IS NULL AND parameter_name IN (…) AND parameter_value <> '')`.
+  - Every row on a non-current key is re-keyed, whether or not its name is still secret. A row encrypted under a name that later left the policy (extra names changed, a protocol descriptor removed) would otherwise stay on the old key, and retiring that key would lose it.
+  - Secret names are passed to the query, so no protocol join is needed.
+- **Candidate rows (decrypt mode):** `parameter_encryption IS NOT NULL`.
 - **Write is a compare-and-set:**
   `UPDATE … SET parameter_value = :new, parameter_encryption = :kid WHERE <primary key> AND parameter_value = :old AND parameter_encryption IS NOT DISTINCT FROM :oldKid`. SQL Server and MySQL use equivalent NULL-safe comparisons.
   - Concurrent sweeps on several replicas, or an admin saving mid-sweep, make the losing update affect 0 rows. No database lock is needed, and the code path is identical on all three databases.
 - **Each row is its own compare-and-set statement**, so no transaction spans rows; progress is logged every 100 rows.
-- **Errors:** a failing row is logged (owner, parameter name, key ID) and skipped; the sweep continues.
-- **Summary:** one INFO line, `encrypted N, re-keyed M, decrypted D, skipped K, failed F, remaining plain-text secrets R`.
+- **Errors:** a failing row is logged (owner, parameter name, key ID, or the exception class for a database error) and skipped; the sweep continues.
+- **Summary, encrypt mode:** one INFO line, `encrypted N, re-keyed M, skipped K, failed F, remaining plain-text secrets R, remaining on non-current keys C`. `C` is a re-count after the sweep of encrypted rows whose key ID is not current.
+- **Summary, decrypt mode:** one WARN line, `decrypted D, skipped K, failed F, remaining encrypted E`, followed by `Downgrading to a version without parameter encryption is safe only when remaining encrypted is 0 and no other node runs in encrypt mode.` `E` is a re-count after the sweep of rows still encrypted.
 
 **Modes** (`*-parameter-encryption-mode`):
 
 | Mode | Effect |
 |---|---|
 | `encrypt` (default when keys are configured) | Encrypts plain-text secrets and re-keys rows on non-current keys. |
-| `decrypt` | Writes plain text back for every encrypted row. Logged at WARN with counts. This is the supported path before downgrading or abandoning the feature; new writes are plain text while it is set. The keyring must stay configured in this mode, since it is needed to decrypt. |
+| `decrypt` | Writes plain text back for every encrypted row. Logged at WARN with counts, including `remaining encrypted`. This is the supported path before downgrading or abandoning the feature; new writes are plain text while it is set. The keyring must stay configured in this mode, since it is needed to decrypt. |
 
-**Rotation**
-1. Add the new key, keep the old one, and set `current-key` to the new ID. Roll out.
-2. The sweep re-keys every row.
-3. When `SELECT count(*) … WHERE parameter_encryption = '<old>'` returns 0, remove the old key from the live keyring.
+**Rotation** (two phases; required for multi-node deployments, harmless for one node)
+1. **Phase 1 — distribute the key.** Add the new key to the keyring on every node, leaving `current-key` unchanged. Roll out fully, so that every node can read the new key before any row uses it.
+2. **Phase 2 — switch.** Set `current-key` to the new ID on every node and roll out. The sweep re-keys every row on a non-current key.
+3. Confirm the summary reports `remaining on non-current keys 0` before removing the old key from the live keyring.
 4. Retired keys are **archived, not destroyed**, for at least the database backup retention period. A restored backup still needs them.
+
+Why two phases: a node that lacks the new key cannot read rows another node has already re-keyed. Sessions on those connections fail there, and an administrator who saves such a connection on that node writes it without the omitted value, which is then lost.
 
 **Key loss.** Values under a lost key are unrecoverable by design. Those connections fail with a clear error until an administrator re-enters the secrets.
 
@@ -137,6 +148,8 @@ The sweep runs in the background after startup, only when a key provider is conf
 | `<db>-parameter-encryption-extra-names` | (none) | Comma-separated extra parameter names to treat as secret. |
 
 **Startup validation fails fast** with a clear message when:
+- the keyring is unset but `current-key` or `extra-names` is set, or `provider` or `mode` differs from its default (most likely a secret that failed to render; running with encryption silently off would leave encrypted connections unusable and store new secrets as plain text);
+- a keyring entry's key identifier is invalid (reported by entry position, never by its text, since a reversed entry would put the key there);
 - a key does not decode;
 - a key is not 32 bytes;
 - the current key ID is missing from the keyring;
@@ -181,6 +194,8 @@ A misconfigured key must never degrade silently to plain text.
 
 1. Generate a key, or a KMS-wrapped data key, and store it separately from database credentials, with an off-host backup.
 2. Apply the upgrade SQL.
+   - The upgrade is **required for this version even with encryption disabled**, because the mappers read and write `parameter_encryption`.
+   - If parts of `upgrade-pre-1.6.1.sql` were already applied by an earlier upgrade, apply only its "Allow secret connection and sharing profile parameters to be stored encrypted" section.
 3. Deploy with the key configured.
    - In a multi-replica deployment, stop all old replicas before new ones start. An old replica reads ciphertext as soon as any new replica's sweep runs.
 4. Confirm the sweep reports `R = 0`, and spot-check sessions for each protocol in use.

@@ -20,7 +20,7 @@ A nullable `parameter_encryption` column (key ID) marks encrypted rows, and `par
 ## Global Constraints
 
 - Every commit message: `GUACAMOLE-558: <Capitalized summary ending with a period.>`, then a blank line, a body if useful, and the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Branch: `GUACAMOLE-558-parameter-encryption`, worktree `/Users/ziv.lifshits/Workspace/honeybadger/guacamole-client-enc558`. The repo is **PUBLIC**. Never write internal company, account, cluster or environment names into code, commits or PR text.
+- Branch: `GUACAMOLE-558-parameter-encryption`, a dedicated git worktree. The repo is **PUBLIC**. Never write internal company, account, cluster or environment names into code, commits or PR text.
 - Java 8 APIs only (`-source/-target 1.8`). No `var`, no `List.of`, no `Optional.isEmpty`.
 - Every new file carries the ASF license header; copy it from an existing file. Apache RAT fails the build otherwise.
 - No new dependency in `guacamole-auth-jdbc-base` or the database modules. The AWS SDK appears only in Task 9's module.
@@ -2274,23 +2274,23 @@ No new committed code. The evidence goes into the PR description. Scripts live i
 
 ---
 
-### Task 11: devqa test with the KMS provider
+### Task 11: Test with the KMS provider on a non-production cluster
 
-**Requires the user's explicit go-ahead before Step 1.** It creates AWS resources: a KMS key and an IAM policy and role in the devqa account.
+**Requires the user's explicit go-ahead before Step 1.** It creates AWS resources: a KMS key and an IAM policy and role in a non-production AWS account.
 
 - [ ] **Step 1 (after approval):**
-  - Create a test KMS key in the devqa account.
-  - Create an IRSA role that allows `kms:Decrypt` on that key only, trusted by the service account `guacamole` in namespace `guac-bump-test`.
+  - Create a test KMS key in that non-production account.
+  - Create an IRSA role that allows `kms:Decrypt` on that key only, trusted by the service account `guacamole` in a test namespace on a non-production Kubernetes test cluster.
   - Generate a data key with `aws kms generate-data-key --key-id <key> --key-spec AES_256`. Base64 the `CiphertextBlob` into `POSTGRESQL_PARAMETER_ENCRYPTION_KEYS=k1:<blob>`, and throw the plain key away.
-  - Use the `devqa` context and AWS profile.
+  - Use that cluster's context and AWS profile.
   - Prefer the project's Terraform repo over CLI if the user asks for it.
-- [ ] **Step 2:** Build an arm64 image from this branch, push `guacamole-cluster:1.6.1-enc-rc1`, and deploy it to `guac-bump-test`:
+- [ ] **Step 2:** Build an arm64 image from this branch, push `guacamole-cluster:1.6.1-enc-rc1`, and deploy it to the test namespace:
   - `POSTGRESQL_PARAMETER_ENCRYPTION_PROVIDER=kms`;
   - the service account annotated with the role;
   - the upgrade SQL applied first.
 
   Expected: the sweep reports `remaining plain-text secrets 0`; an SSH session works; the logs show no KMS error; CloudTrail shows one `Decrypt` call per replica start.
-- [ ] **Step 3:** Remove `kms:Decrypt` from the role and restart one pod. Expected: the extension fails to load with `AWS KMS could not decrypt parameter encryption key "k1": KmsException`, and nothing leaks. Restore the permission afterwards.
+- [ ] **Step 3:** Remove `kms:Decrypt` from the role and restart one pod. Expected: the extension fails to load with `AWS KMS could not decrypt parameter encryption key "k1": KmsException (AccessDeniedException)`, and nothing leaks. Restore the permission afterwards.
 
 ---
 
