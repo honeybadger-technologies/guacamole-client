@@ -33,7 +33,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
-import org.apache.guacamole.auth.jdbc.security.PasswordEncryptionService;
+import org.apache.guacamole.auth.jdbc.security.PBKDF2PasswordEncryptionService;
 import org.apache.guacamole.auth.jdbc.security.SaltService;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.auth.jdbc.base.ModeledPermissions;
@@ -155,7 +155,7 @@ public class ModeledUser extends ModeledPermissions<UserModel> implements User {
      * Service for hashing passwords.
      */
     @Inject
-    private PasswordEncryptionService encryptionService;
+    private PBKDF2PasswordEncryptionService encryptionService;
 
     /**
      * Service for providing secure, random salts.
@@ -269,17 +269,13 @@ public class ModeledUser extends ModeledPermissions<UserModel> implements User {
         if (password == null) {
             userModel.setPasswordSalt(saltService.generateSalt());
             userModel.setPasswordHash(saltService.generateSalt());
+            userModel.setPasswordHashAlgorithm(PBKDF2PasswordEncryptionService.ALGORITHM);
+            userModel.setPasswordHashIterations(encryptionService.getIterations());
         }
 
-        // Otherwise generate new salt and hash given password using newly-generated salt
-        else {
-            byte[] salt = saltService.generateSalt();
-            byte[] hash = encryptionService.createPasswordHash(password, salt);
-
-            // Set stored salt and hash
-            userModel.setPasswordSalt(salt);
-            userModel.setPasswordHash(hash);
-        }
+        // Otherwise hash given password using a newly-generated salt
+        else
+            encryptionService.setPassword(userModel, password);
 
         userModel.setPasswordDate(new Timestamp(System.currentTimeMillis()));
 

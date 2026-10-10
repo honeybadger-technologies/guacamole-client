@@ -40,7 +40,7 @@ import org.apache.guacamole.auth.jdbc.base.ModeledActivityRecord;
 import org.apache.guacamole.auth.jdbc.permission.ObjectPermissionMapper;
 import org.apache.guacamole.auth.jdbc.permission.ObjectPermissionModel;
 import org.apache.guacamole.auth.jdbc.permission.UserPermissionMapper;
-import org.apache.guacamole.auth.jdbc.security.PasswordEncryptionService;
+import org.apache.guacamole.auth.jdbc.security.PBKDF2PasswordEncryptionService;
 import org.apache.guacamole.auth.jdbc.security.PasswordPolicyService;
 import org.apache.guacamole.form.Field;
 import org.apache.guacamole.form.PasswordField;
@@ -149,7 +149,7 @@ public class UserService extends ModeledDirectoryObjectService<ModeledUser, User
      * Service for hashing passwords.
      */
     @Inject
-    private PasswordEncryptionService encryptionService;
+    private PBKDF2PasswordEncryptionService encryptionService;
 
     /**
      * Service for enforcing password complexity policies.
@@ -403,13 +403,30 @@ public class UserService extends ModeledDirectoryObjectService<ModeledUser, User
         // Retrieve corresponding user model, if such a user exists
         UserModel userModel = userMapper.selectOne(username,
                 getCaseSensitivity());
-        if (userModel == null)
-            return null;
 
-        // Verify provided password is correct
-        byte[] hash = encryptionService.createPasswordHash(password, userModel.getPasswordSalt());
-        if (!Arrays.equals(hash, userModel.getPasswordHash()))
+        // Hash anyway if no such user exists, so the time taken to reject
+        // the login does not reveal whether the user exists
+        if (userModel == null) {
+            encryptionService.simulateVerification(password);
             return null;
+        }
+
+        // Verify provided password is correct, again equalizing timing for
+        // legacy SHA-256 hashes, which are rejected far faster than PBKDF2
+        if (!encryptionService.verifyPassword(userModel, password)) {
+            if (userModel.getPasswordHashAlgorithm() == null)
+                encryptionService.simulateVerification(password);
+            return null;
+        }
+
+        // Transparently upgrade legacy or outdated hashes now that the
+        // plaintext password is known, without altering the password date
+        // ponytail: rewrites the whole row read moments ago; a dedicated
+        // hash-only UPDATE avoids clobbering a concurrent edit if that matters
+        if (encryptionService.isUpgradeNeeded(userModel)) {
+            encryptionService.setPassword(userModel, password);
+            userMapper.update(userModel);
+        }
 
         // Create corresponding user object, set up cyclic reference
         ModeledUser user = getObjectInstance(null, userModel);

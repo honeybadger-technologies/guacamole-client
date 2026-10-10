@@ -20,7 +20,6 @@
 package org.apache.guacamole.auth.jdbc.security;
 
 import com.google.inject.Inject;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -53,7 +52,7 @@ public class PasswordPolicyService {
      * Service for hashing passwords.
      */
     @Inject
-    private PasswordEncryptionService encryptionService;
+    private PBKDF2PasswordEncryptionService encryptionService;
 
     /**
      * Regular expression which matches only if the string contains at least one
@@ -148,8 +147,10 @@ public class PasswordPolicyService {
                 historySize, environment.getCaseSensitivity());
         for (PasswordRecordModel record : history) {
 
-            byte[] hash = encryptionService.createPasswordHash(password, record.getPasswordSalt());
-            if (Arrays.equals(hash, record.getPasswordHash()))
+            if (encryptionService.verifyPassword(password,
+                    record.getPasswordSalt(), record.getPasswordHash(),
+                    record.getPasswordHashAlgorithm(),
+                    record.getPasswordHashIterations()))
                 return true;
             
         }
