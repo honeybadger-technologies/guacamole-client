@@ -53,3 +53,17 @@ CREATE TABLE guacamole_user_password_reset (
     REFERENCES `guacamole_user` (`user_id`) ON DELETE CASCADE
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+--
+-- Allow secret connection and sharing profile parameters to be stored
+-- encrypted. parameter_encryption holds the identifier of the key; NULL
+-- denotes a plain-text value.
+--
+
+ALTER TABLE guacamole_connection_parameter
+    MODIFY `parameter_value` varchar(8192) NOT NULL,
+    ADD COLUMN `parameter_encryption` varchar(64);
+
+ALTER TABLE guacamole_sharing_profile_parameter
+    MODIFY `parameter_value` varchar(8192) NOT NULL,
+    ADD COLUMN `parameter_encryption` varchar(64);

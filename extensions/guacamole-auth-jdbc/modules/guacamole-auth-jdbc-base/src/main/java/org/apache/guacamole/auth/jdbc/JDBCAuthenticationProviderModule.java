@@ -19,7 +19,9 @@
 
 package org.apache.guacamole.auth.jdbc;
 
+import com.google.inject.Provides;
 import com.google.inject.Scopes;
+import com.google.inject.Singleton;
 import javax.sql.DataSource;
 import org.apache.guacamole.auth.jdbc.user.ModeledUserContext;
 import org.apache.guacamole.auth.jdbc.connectiongroup.RootConnectionGroup;
@@ -93,6 +95,13 @@ import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserMapper;
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.GuacamoleServerException;
+import org.apache.guacamole.auth.jdbc.encryption.ParameterEncryptionMapper;
+import org.apache.guacamole.auth.jdbc.encryption.ParameterEncryptionService;
+import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProvider;
+import org.apache.guacamole.auth.jdbc.encryption.ParameterKeyProviderFactory;
+import org.apache.guacamole.auth.jdbc.encryption.SecretParameterPolicy;
+import org.apache.guacamole.auth.jdbc.encryption.SweepStarter;
 import org.apache.guacamole.auth.jdbc.cluster.ClusterModule;
 import org.apache.guacamole.auth.jdbc.cluster.InventoryMetrics;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupParentUserGroupMapper;
@@ -162,6 +171,7 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         addMapperClass(UserParentUserGroupMapper.class);
         addMapperClass(UserPermissionMapper.class);
         addMapperClass(UserRecordMapper.class);
+        addMapperClass(ParameterEncryptionMapper.class);
         
         // Bind core implementations of guacamole-ext classes
         bind(ActiveConnectionDirectory.class);
@@ -206,6 +216,9 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         install(new ClusterModule(environment));
         bind(InventoryMetrics.class).asEagerSingleton();
 
+        // Eager: loads (and validates) the encryption configuration at startup
+        bind(SweepStarter.class).asEagerSingleton();
+
         // Share keys cross replicas only when clustering is on. A property that
         // cannot be read degrades to single-replica sharing rather than failing
         // the whole authentication provider to load.
@@ -230,6 +243,38 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         bind(UserPermissionService.class);
         bind(UserService.class);
         
+    }
+
+    /**
+     * Creates the service encrypting secret connection parameters, failing
+     * fast on any invalid encryption configuration.
+     *
+     * @param environment
+     *     The environment of the Guacamole server.
+     *
+     * @return
+     *     The parameter encryption service.
+     *
+     * @throws GuacamoleException
+     *     If the encryption configuration is invalid.
+     */
+    @Provides
+    @Singleton
+    ParameterEncryptionService provideParameterEncryptionService(
+            JDBCEnvironment environment) throws GuacamoleException {
+
+        String mode = environment.getParameterEncryptionMode();
+        if (!"encrypt".equals(mode) && !"decrypt".equals(mode))
+            throw new GuacamoleServerException("Parameter encryption mode must "
+                    + "be \"encrypt\" or \"decrypt\", not \"" + mode + "\".");
+
+        ParameterKeyProvider keys = ParameterKeyProviderFactory.loadConfigured(environment);
+        SecretParameterPolicy policy = new SecretParameterPolicy(
+                environment.getProtocols().values(),
+                environment.getParameterEncryptionExtraNames());
+
+        return new ParameterEncryptionService(keys, policy, "decrypt".equals(mode));
+
     }
 
 }

@@ -62,3 +62,21 @@ CREATE NONCLUSTERED INDEX [IX_guacamole_user_password_reset_user_id]
 CREATE NONCLUSTERED INDEX [IX_guacamole_user_password_reset_created]
     ON [guacamole_user_password_reset] ([created]);
 GO
+
+--
+-- Allow secret connection and sharing profile parameters to be stored
+-- encrypted. parameter_encryption holds the identifier of the key; NULL
+-- denotes a plain-text value.
+--
+
+ALTER TABLE [guacamole_connection_parameter]
+    ALTER COLUMN [parameter_value] [nvarchar](max) NOT NULL;
+ALTER TABLE [guacamole_connection_parameter]
+    ADD [parameter_encryption] [nvarchar](64);
+GO
+
+ALTER TABLE [guacamole_sharing_profile_parameter]
+    ALTER COLUMN [parameter_value] [nvarchar](max) NOT NULL;
+ALTER TABLE [guacamole_sharing_profile_parameter]
+    ADD [parameter_encryption] [nvarchar](64);
+GO

@@ -61,6 +61,11 @@ public class PBKDF2PasswordEncryptionServiceTest {
         private int iterations = 1000;
 
         @Override public int getPasswordHashIterations() { return iterations; }
+        @Override public String getParameterEncryptionKeys() { return null; }
+        @Override public String getParameterEncryptionCurrentKey() { return null; }
+        @Override public String getParameterEncryptionProvider() { return "property"; }
+        @Override public String getParameterEncryptionMode() { return "encrypt"; }
+        @Override public String getParameterEncryptionExtraNames() { return null; }
         @Override public boolean isUserRequired() { return false; }
         @Override public int getAbsoluteMaxConnections() { return 0; }
         @Override public int getBatchSize() { return 100; }

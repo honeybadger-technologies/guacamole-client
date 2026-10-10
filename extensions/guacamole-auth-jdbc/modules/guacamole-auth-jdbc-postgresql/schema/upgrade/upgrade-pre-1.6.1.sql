@@ -57,3 +57,17 @@ CREATE INDEX guacamole_user_password_reset_user_id
 
 CREATE INDEX guacamole_user_password_reset_created
     ON guacamole_user_password_reset(created);
+
+--
+-- Allow secret connection and sharing profile parameters to be stored
+-- encrypted. parameter_encryption holds the identifier of the key; NULL
+-- denotes a plain-text value.
+--
+
+ALTER TABLE guacamole_connection_parameter
+    ALTER COLUMN parameter_value TYPE varchar(8192),
+    ADD COLUMN parameter_encryption varchar(64);
+
+ALTER TABLE guacamole_sharing_profile_parameter
+    ALTER COLUMN parameter_value TYPE varchar(8192),
+    ADD COLUMN parameter_encryption varchar(64);
