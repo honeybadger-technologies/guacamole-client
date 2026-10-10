@@ -27,6 +27,7 @@ import java.util.TimeZone;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.auth.jdbc.JDBCEnvironment;
+import org.apache.guacamole.net.auth.PBKDF2PasswordHasher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.guacamole.auth.jdbc.security.PasswordPolicy;
@@ -153,6 +154,13 @@ public class MySQLEnvironment extends JDBCEnvironment {
     public int getBatchSize() throws GuacamoleException {
         return getProperty(MySQLGuacamoleProperties.MYSQL_BATCH_SIZE,
             DEFAULT_BATCH_SIZE
+        );
+    }
+
+    @Override
+    public int getPasswordHashIterations() throws GuacamoleException {
+        return getProperty(MySQLGuacamoleProperties.MYSQL_PASSWORD_HASH_ITERATIONS,
+            PBKDF2PasswordHasher.DEFAULT_ITERATIONS
         );
     }
 

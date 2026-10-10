@@ -246,6 +246,19 @@ public class SQLServerGuacamoleProperties {
     };
 
     /**
+     * The number of PBKDF2 iterations to use when hashing passwords. Existing
+     * hashes using fewer iterations are rehashed upon the user's next
+     * successful login.
+     */
+    public static final IntegerGuacamoleProperty SQLSERVER_PASSWORD_HASH_ITERATIONS =
+            new IntegerGuacamoleProperty() {
+
+        @Override
+        public String getName() { return "sqlserver-password-hash-iterations"; }
+
+    };
+
+    /**
      * Whether or not all server certificates should be trusted, including those
      * signed by an unknown certificate authority, such as self-signed
      * certificates.

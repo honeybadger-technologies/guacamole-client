@@ -40,7 +40,7 @@ import org.apache.guacamole.auth.jdbc.connectiongroup.ConnectionGroupService;
 import org.apache.guacamole.auth.jdbc.connection.ConnectionService;
 import org.apache.guacamole.auth.jdbc.tunnel.GuacamoleTunnelService;
 import org.apache.guacamole.auth.jdbc.security.PasswordEncryptionService;
-import org.apache.guacamole.auth.jdbc.security.SHA256PasswordEncryptionService;
+import org.apache.guacamole.auth.jdbc.security.PBKDF2PasswordEncryptionService;
 import org.apache.guacamole.auth.jdbc.security.SaltService;
 import org.apache.guacamole.auth.jdbc.security.SecureRandomSaltService;
 import org.apache.guacamole.auth.jdbc.permission.SystemPermissionService;
@@ -195,7 +195,7 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         bind(ConnectionService.class);
         bind(EntityService.class);
         bind(GuacamoleTunnelService.class).to(RestrictedGuacamoleTunnelService.class);
-        bind(PasswordEncryptionService.class).to(SHA256PasswordEncryptionService.class);
+        bind(PasswordEncryptionService.class).to(PBKDF2PasswordEncryptionService.class);
         bind(PasswordPolicyService.class);
         bind(SaltService.class).to(SecureRandomSaltService.class);
         // Cluster coordination (no-op unless cluster-enabled is true)
