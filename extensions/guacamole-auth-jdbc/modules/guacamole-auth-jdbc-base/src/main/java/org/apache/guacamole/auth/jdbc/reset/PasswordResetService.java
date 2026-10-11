@@ -22,6 +22,7 @@ package org.apache.guacamole.auth.jdbc.reset;
 
 import com.google.inject.Inject;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleSecurityException;
@@ -35,12 +36,13 @@ import org.apache.guacamole.auth.jdbc.user.UserService;
 import org.apache.guacamole.form.PasswordField;
 import org.apache.guacamole.language.TranslatableGuacamoleClientException;
 import org.apache.guacamole.language.TranslatableGuacamoleInsufficientCredentialsException;
+import org.apache.guacamole.language.TranslatableGuacamoleInvalidCredentialsException;
 import org.apache.guacamole.language.TranslatableGuacamoleResourceNotFoundException;
+import org.apache.guacamole.language.TranslatableMessage;
 import org.apache.guacamole.net.auth.AuthenticationProvider;
 import org.apache.guacamole.net.auth.Credentials;
 import org.apache.guacamole.net.auth.Permissions;
 import org.apache.guacamole.net.auth.credentials.CredentialsInfo;
-import org.apache.guacamole.net.auth.credentials.GuacamoleInvalidCredentialsException;
 import org.apache.guacamole.net.auth.permission.ObjectPermission;
 import org.apache.guacamole.net.auth.permission.SystemPermission;
 import org.mybatis.guice.transactional.Transactional;
@@ -96,6 +98,11 @@ public class PasswordResetService {
      */
     private static final int DEFAULT_MAX_PER_HOUR = 3;
 
+    /**
+     * Default product name used in reset mails.
+     */
+    static final String DEFAULT_SERVICE_NAME = "Guacamole";
+
     @Inject
     private JDBCEnvironment environment;
 
@@ -113,6 +120,20 @@ public class PasswordResetService {
 
     @Inject
     private PasswordPolicyService passwordPolicyService;
+
+    /**
+     * Returns the error for a reset link that is invalid, expired or used.
+     * It is an ordinary invalid login to the server, so failure accounting
+     * is unchanged; only the message key differs, so the login page can say
+     * why. The token is opaque, so this reveals nothing about any account.
+     *
+     * @return
+     *     The error to throw.
+     */
+    private static TranslatableGuacamoleInvalidCredentialsException invalidLink() {
+        return new TranslatableGuacamoleInvalidCredentialsException("Invalid login",
+                "PASSWORD_RESET.ERROR_LINK_INVALID", CredentialsInfo.USERNAME_PASSWORD);
+    }
 
     /**
      * Verifies that the holder of the given effective permissions may send a
@@ -201,14 +222,51 @@ public class PasswordResetService {
         String token = tokenStore.issue(model.getObjectID(), ttl, maxPerHour, new Date());
         String link = baseUrl.replaceAll("/+$", "") + "/#/?" + TOKEN_PARAMETER + "=" + token;
 
-        mailer.send(email.trim(), "Guacamole password reset",
-                "A password reset was requested for the Guacamole account \""
-                + user.getIdentifier() + "\".\n\n"
+        String serviceName = environment.getProperty(
+                PasswordResetProperties.PASSWORD_RESET_SERVICE_NAME, DEFAULT_SERVICE_NAME);
+        mailer.send(email.trim(), mailSubject(serviceName),
+                mailBody(serviceName, user.getIdentifier(), ttl, link));
+
+    }
+
+    /**
+     * Returns the subject of a reset mail.
+     *
+     * @param serviceName
+     *     The product name, as configured.
+     *
+     * @return
+     *     The subject line.
+     */
+    static String mailSubject(String serviceName) {
+        return serviceName + " password reset";
+    }
+
+    /**
+     * Returns the body of a reset mail.
+     *
+     * @param serviceName
+     *     The product name, as configured.
+     *
+     * @param username
+     *     The user whose password may be reset.
+     *
+     * @param ttl
+     *     How long the link stays valid, in minutes.
+     *
+     * @param link
+     *     The reset link.
+     *
+     * @return
+     *     The plain text body.
+     */
+    static String mailBody(String serviceName, String username, int ttl, String link) {
+        return "A password reset was requested for the " + serviceName + " account \""
+                + username + "\".\n\n"
                 + "To choose a new password, open this link within " + ttl
                 + " minutes:\n\n" + link + "\n\n"
                 + "The link can be used once. If you did not expect this "
-                + "message, you can ignore it; your password is unchanged.\n");
-
+                + "message, you can ignore it; your password is unchanged.\n";
     }
 
     /**
@@ -248,15 +306,15 @@ public class PasswordResetService {
         if (user == null || user.isDisabled() || !user.isAccountValid()) {
             logger.info("Rejected an invalid, expired or used password reset "
                     + "link from {}.", credentials.getRemoteAddress());
-            throw new GuacamoleInvalidCredentialsException("Invalid login",
-                    CredentialsInfo.USERNAME_PASSWORD);
+            throw invalidLink();
         }
 
         String newPassword = credentials.getParameter(NEW_PASSWORD_PARAMETER);
         String confirmNewPassword = credentials.getParameter(CONFIRM_NEW_PASSWORD_PARAMETER);
         if (newPassword == null || confirmNewPassword == null)
             throw new TranslatableGuacamoleInsufficientCredentialsException(
-                    "Password reset", "PASSWORD_RESET.INFO_CHOOSE_PASSWORD", RESET_PASSWORD);
+                    "Password reset", new TranslatableMessage("PASSWORD_RESET.INFO_CHOOSE_PASSWORD",
+                    Collections.singletonMap("USERNAME", username)), RESET_PASSWORD);
 
         if (newPassword.isEmpty())
             throw new TranslatableGuacamoleClientException("Passwords may not "
@@ -301,8 +359,7 @@ public class PasswordResetService {
             Date now) throws GuacamoleException {
 
         if (!tokenStore.consume(token, now))
-            throw new GuacamoleInvalidCredentialsException("Invalid login",
-                    CredentialsInfo.USERNAME_PASSWORD);
+            throw invalidLink();
 
         passwordPolicyService.recordPassword(user);
         user.setPassword(newPassword);
