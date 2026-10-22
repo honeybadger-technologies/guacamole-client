@@ -111,6 +111,51 @@ angular.module('guacJdbcJoinRequests').config(['$provide', function gateConnect(
     }]);
 }]);
 
+// A user whose only connection is held by someone else lands on the connection
+// list instead of being sent straight into it, so they can still reach other
+// pages, and cancelling a join request does not loop back into the prompt.
+angular.module('guacJdbcJoinRequests').config(['$provide', function busyHomePage($provide) {
+    $provide.decorator('userPageService', ['$delegate', '$injector',
+            function decorateUserPageService($delegate, $injector) {
+
+        var originalGetHomePage = $delegate.getHomePage;
+
+        $delegate.getHomePage = function getHomePage() {
+
+            var $q                 = $injector.get('$q');
+            var ClientIdentifier   = $injector.get('ClientIdentifier');
+            var PageDefinition     = $injector.get('PageDefinition');
+            var joinRequestService = $injector.get('joinRequestService');
+
+            return originalGetHomePage.apply(this, arguments).then(function homePage(page) {
+
+                var match = /^\/client\/([^/?]+)/.exec(page.url || '');
+                if (!match)
+                    return page;
+
+                var identifier = ClientIdentifier.fromString(decodeURIComponent(match[1]));
+                if (identifier.type !== ClientIdentifier.Types.CONNECTION
+                        || ['postgresql', 'mysql', 'sqlserver'].indexOf(identifier.dataSource) === -1)
+                    return page;
+
+                return joinRequestService.getStatus(identifier.dataSource, identifier.id)
+                    .then(function checked(status) {
+                        if (status.state !== 'inUse')
+                            return page;
+                        return new PageDefinition({ name : 'USER_MENU.ACTION_NAVIGATE_HOME', url : '/' });
+                    }, function unchecked() {
+                        return $q.resolve(page);
+                    });
+
+            });
+
+        };
+
+        return $delegate;
+
+    }]);
+}]);
+
 angular.module('guacJdbcJoinRequests').factory('joinGate', ['$injector',
         function joinGate($injector) {
 
