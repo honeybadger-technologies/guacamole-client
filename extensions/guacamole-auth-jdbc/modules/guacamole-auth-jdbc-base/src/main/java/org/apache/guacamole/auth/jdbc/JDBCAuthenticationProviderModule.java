@@ -75,6 +75,10 @@ import org.apache.guacamole.auth.jdbc.permission.UserGroupPermissionMapper;
 import org.apache.guacamole.auth.jdbc.permission.UserGroupPermissionService;
 import org.apache.guacamole.auth.jdbc.permission.UserGroupPermissionSet;
 import org.apache.guacamole.auth.jdbc.security.PasswordPolicyService;
+import org.apache.guacamole.auth.jdbc.join.InMemoryJoinRequestStore;
+import org.apache.guacamole.auth.jdbc.join.JoinRequestService;
+import org.apache.guacamole.auth.jdbc.join.JoinRequestStore;
+import org.apache.guacamole.auth.jdbc.join.RedisJoinRequestStore;
 import org.apache.guacamole.auth.jdbc.sharing.ConnectionSharingService;
 import org.apache.guacamole.auth.jdbc.sharing.HashSharedConnectionMap;
 import org.apache.guacamole.auth.jdbc.sharing.RedisSharedConnectionMap;
@@ -234,6 +238,12 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
             bind(SharedConnectionMap.class).to(RedisSharedConnectionMap.class).in(Scopes.SINGLETON);
         else
             bind(SharedConnectionMap.class).to(HashSharedConnectionMap.class).in(Scopes.SINGLETON);
+
+        if (clusterEnabled)
+            bind(JoinRequestStore.class).to(RedisJoinRequestStore.class).in(Scopes.SINGLETON);
+        else
+            bind(JoinRequestStore.class).to(InMemoryJoinRequestStore.class).in(Scopes.SINGLETON);
+        bind(JoinRequestService.class).in(Scopes.SINGLETON);
         bind(ShareKeyGenerator.class).to(SecureRandomShareKeyGenerator.class).in(Scopes.SINGLETON);
         bind(SharingProfilePermissionService.class);
         bind(SharingProfileService.class);

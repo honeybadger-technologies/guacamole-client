@@ -19,6 +19,9 @@
 
 package org.apache.guacamole.auth.jdbc.join;
 
+import com.google.inject.Inject;
+import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -32,6 +35,7 @@ import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleResourceConflictException;
 import org.apache.guacamole.GuacamoleResourceNotFoundException;
 import org.apache.guacamole.GuacamoleSecurityException;
+import org.apache.guacamole.auth.jdbc.JDBCEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -77,6 +81,38 @@ public class JoinRequestService {
         this.timeoutSeconds = timeoutSeconds;
         this.clock = clock;
         this.ids = ids;
+    }
+
+    /**
+     * Creates a JoinRequestService configured from guacamole.properties.
+     *
+     * @param store
+     *     Where requests are kept.
+     *
+     * @param environment
+     *     The JDBC environment.
+     *
+     * @throws GuacamoleException
+     *     If the properties cannot be parsed.
+     */
+    @Inject
+    public JoinRequestService(JoinRequestStore store, JDBCEnvironment environment)
+            throws GuacamoleException {
+        this(store,
+                environment.getProperty(JoinRequestProperties.JOIN_REQUEST_ENABLED, false),
+                environment.getProperty(JoinRequestProperties.JOIN_REQUEST_TIMEOUT,
+                        JoinRequestProperties.DEFAULT_TIMEOUT),
+                System::currentTimeMillis,
+                newIdGenerator());
+    }
+
+    /**
+     * @return
+     *     A generator of unguessable request IDs.
+     */
+    private static Supplier<String> newIdGenerator() {
+        final SecureRandom random = new SecureRandom();
+        return () -> new BigInteger(130, random).toString(32);
     }
 
     private void requireEnabled() throws GuacamoleException {
