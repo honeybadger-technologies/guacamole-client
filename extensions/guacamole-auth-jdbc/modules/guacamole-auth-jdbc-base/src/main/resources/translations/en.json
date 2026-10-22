@@ -130,6 +130,25 @@
         "INFO_REQUEST_ACCEPTED"  : "If the account exists and has an e-mail address, a link was sent.",
         "INFO_LINK_SENT"       : "A password reset link was sent to the e-mail address of \"{USERNAME}\"."
 
+    },
+
+    "JOIN" : {
+
+        "ACTION_CANCEL"  : "Cancel",
+        "ACTION_DENY"    : "Deny",
+        "ACTION_ENFORCE" : "Enforce",
+        "ACTION_OK"      : "OK",
+        "ACTION_RETRY"   : "Retry",
+
+        "DIALOG_HEADER_REQUEST" : "Join Request",
+        "DIALOG_HEADER_WAITING" : "Connection In Use",
+
+        "TEXT_DENIED"             : "Your request to join was declined. You can connect anyway, which ends the current session.",
+        "TEXT_EXPIRED"            : "No response from the current user.",
+        "TEXT_REQUEST"            : "{USERNAME} wants to join this session.",
+        "TEXT_REQUEST_NO_SHARING" : "{USERNAME} wants to join this session. This connection cannot be shared.",
+        "TEXT_WAITING"            : "An active session is running, please wait to be admitted."
+
     }
 
 }

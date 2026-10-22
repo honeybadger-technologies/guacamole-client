@@ -21,7 +21,8 @@
     ],
 
     "js" : [
-        "js/passwordReset.js"
+        "js/passwordReset.js",
+        "js/joinRequests.js"
     ],
 
     "translations" : [
