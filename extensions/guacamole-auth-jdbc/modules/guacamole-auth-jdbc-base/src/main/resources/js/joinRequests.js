@@ -396,7 +396,16 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
 
     };
 
-    $interval(function pollIncoming() {
+    // A 404 means join requests are disabled on the server: stop asking
+    var incomingPoll = null;
+    var disabled = function disabled(error) {
+        if (error && (error.type === 'NOT_FOUND' || error.statusCode === 404)) {
+            $interval.cancel(incomingPoll);
+            incomingPoll = null;
+        }
+    };
+
+    incomingPoll = $interval(function pollIncoming() {
 
         var dataSources = {};
         angular.forEach(guacClientManager.getManagedClients(), function collect(client, id) {
@@ -420,7 +429,7 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
                 if (requests.length && !shownRequest && !guacNotification.getStatus())
                     prompt(dataSource, requests[0]);
 
-            });
+            }, disabled);
         });
 
     }, POLL_MS);
