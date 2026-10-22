@@ -159,9 +159,10 @@ angular.module('guacJdbcJoinRequests').config(['$provide', function busyHomePage
 angular.module('guacJdbcJoinRequests').factory('joinGate', ['$injector',
         function joinGate($injector) {
 
-    var $interval          = $injector.get('$interval');
-    var $location          = $injector.get('$location');
-    var $rootScope         = $injector.get('$rootScope');
+    var $interval             = $injector.get('$interval');
+    var $location             = $injector.get('$location');
+    var $rootScope            = $injector.get('$rootScope');
+    var authenticationService = $injector.get('authenticationService');
     var ClientIdentifier   = $injector.get('ClientIdentifier');
     var guacClientManager  = $injector.get('guacClientManager');
     var guacNotification   = $injector.get('guacNotification');
@@ -257,7 +258,12 @@ angular.module('guacJdbcJoinRequests').factory('joinGate', ['$injector',
                             type       : ClientIdentifier.Types.CONNECTION,
                             id         : result.shareKey
                         });
-                        $location.path('/client/' + sharedId).search({ key : result.shareKey });
+                        // The client route does not reload between clients, so its
+                        // ?key= handling never runs: add the key to the session first
+                        authenticationService.updateCurrentToken({ key : result.shareKey })
+                            .then(function keyAdded() {
+                                $location.url('/client/' + sharedId);
+                            }, guacNotification.SHOW_REQUEST_ERROR);
                     }
                     else if (result.status === 'DENIED') {
                         stop();
