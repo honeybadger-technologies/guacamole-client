@@ -143,3 +143,12 @@ endpoints only carry the key to the requester. They never create one.
 - Fork branch `GUACAMOLE-453-join-requests` → PR to fork `main`.
 - Upstream PR to `apache/guacamole-client` with only the GUACAMOLE-453 commits.
   It leaves out `ClusterStore` and `RedisJoinRequestStore`, and this document.
+
+## Implementation notes (plan of 2026-10-22)
+
+- **UI lives in the JDBC extension** (`js/joinRequests.js`, registered in the three JDBC manifests), not in the core web app. The feature belongs to the JDBC auth provider, and the core app needs no change.
+- **The share key is created server-side.** On admit the connected user posts `{"decision":"admit","sharingProfile":"<id>"}`, and the server calls the existing `ConnectionSharingService.shareConnection` as that user, which is the same path and the same permission checks as `sharingCredentials`. The browser never handles the key on the connected user's side.
+- **`ClusterStore` gains five methods:** put, get, list, resolve, remove. Lua scripts make put and resolve atomic.
+- **No JavaScript unit tests.** The web app has no AngularJS test harness. The UI is verified manually (see Testing), and all rules sit server-side, where they are unit-tested.
+- **Connected users are found per node.** `incoming` lists only requests for sessions served by the node that answers the poll. With sticky load-balancer sessions that is the user's own node. Newcomer status and Enforce are cluster-wide.
+- **Build from the root reactor** (`mvn -pl <module> -am …`) so that `guacamole-ext` is built from source rather than resolved from a stale local repository.
