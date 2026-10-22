@@ -22,6 +22,7 @@ package org.apache.guacamole.cluster;
 import java.util.List;
 
 import java.util.Collection;
+import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 
@@ -263,6 +264,89 @@ public interface ClusterStore {
      *     The share key which is no longer valid.
      */
     void publishShareRevocation(String shareKey);
+
+    /**
+     * Stores a join request until it expires, indexed under each primary
+     * session it targets.
+     *
+     * @param id
+     *     The join request ID.
+     *
+     * @param fields
+     *     The request's fields, including "status".
+     *
+     * @param recordUuids
+     *     The record UUIDs of the primary sessions the request targets.
+     *
+     * @param ttlSeconds
+     *     Seconds until the request and its index entries expire.
+     *
+     * @throws GuacamoleException
+     *     If the request cannot be stored.
+     */
+    void putJoinRequest(String id, Map<String, String> fields,
+            Collection<String> recordUuids, int ttlSeconds) throws GuacamoleException;
+
+    /**
+     * Returns the fields of a join request.
+     *
+     * @param id
+     *     The join request ID.
+     *
+     * @return
+     *     The request's fields, or null if it does not exist.
+     *
+     * @throws GuacamoleException
+     *     If the store cannot be read.
+     */
+    Map<String, String> getJoinRequest(String id) throws GuacamoleException;
+
+    /**
+     * Returns the IDs of join requests indexed under a primary session.
+     *
+     * @param recordUuid
+     *     A primary session's record UUID.
+     *
+     * @return
+     *     The IDs of join requests targeting that session. Some may have
+     *     expired.
+     *
+     * @throws GuacamoleException
+     *     If the store cannot be read.
+     */
+    Collection<String> listJoinRequests(String recordUuid) throws GuacamoleException;
+
+    /**
+     * Atomically resolves a pending join request.
+     *
+     * @param id
+     *     The join request ID.
+     *
+     * @param status
+     *     The new status.
+     *
+     * @param shareKey
+     *     The share key granted, or null.
+     *
+     * @return
+     *     true if the request was PENDING and is now resolved.
+     *
+     * @throws GuacamoleException
+     *     If the store cannot be written.
+     */
+    boolean resolveJoinRequest(String id, String status, String shareKey)
+            throws GuacamoleException;
+
+    /**
+     * Removes a join request.
+     *
+     * @param id
+     *     The join request ID to remove.
+     *
+     * @throws GuacamoleException
+     *     If the store cannot be written.
+     */
+    void removeJoinRequest(String id) throws GuacamoleException;
 
     /**
      * Records one authentication failure for the given client address,

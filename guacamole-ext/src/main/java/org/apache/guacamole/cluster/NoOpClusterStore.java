@@ -23,7 +23,9 @@ import java.util.List;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.GuacamoleUnsupportedException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 import org.apache.guacamole.cluster.metrics.ClusterMetrics;
 
@@ -132,6 +134,32 @@ public class NoOpClusterStore implements ClusterStore {
     @Override
     public void publishShareRevocation(String shareKey) {
         // No other replica exists to announce to
+    }
+
+    // Without clustering, join requests use the in-memory store instead
+    @Override
+    public void putJoinRequest(String id, Map<String, String> fields,
+            Collection<String> recordUuids, int ttlSeconds) throws GuacamoleException {
+        throw new GuacamoleUnsupportedException("Join requests require clustering.");
+    }
+
+    @Override
+    public Map<String, String> getJoinRequest(String id) {
+        return null;
+    }
+
+    @Override
+    public Collection<String> listJoinRequests(String recordUuid) {
+        return Collections.<String>emptyList();
+    }
+
+    @Override
+    public boolean resolveJoinRequest(String id, String status, String shareKey) {
+        return false;
+    }
+
+    @Override
+    public void removeJoinRequest(String id) {
     }
 
     @Override

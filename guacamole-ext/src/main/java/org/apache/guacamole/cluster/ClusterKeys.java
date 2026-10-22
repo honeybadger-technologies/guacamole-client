@@ -107,6 +107,14 @@ public final class ClusterKeys {
         return "guac:share:" + escape(shareKey);
     }
 
+    public static String joinRequest(String id) {
+        return "guac:join:" + escape(id);
+    }
+
+    public static String joinRequestIndex(String recordUuid) {
+        return "guac:join:idx:" + escape(recordUuid);
+    }
+
     public static String authFailure(String address) {
         return "guac:authfail:" + escape(address);
     }

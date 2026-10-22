@@ -20,6 +20,8 @@
 package org.apache.guacamole.cluster;
 
 import java.util.Arrays;
+import java.util.Collections;
+import org.apache.guacamole.GuacamoleUnsupportedException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMethod;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class NoOpClusterStoreTest {
 
@@ -89,6 +93,17 @@ public class NoOpClusterStoreTest {
         NoOpClusterStore store = new NoOpClusterStore();
         assertNull(store.lookupRoute("$abc"));
         assertEquals(0L, store.countTunnels(ENDPOINT));
+    }
+
+    @Test
+    public void joinRequestsAreUnsupportedWithoutClustering() throws Exception {
+        NoOpClusterStore store = new NoOpClusterStore();
+        assertThrows(GuacamoleUnsupportedException.class, () -> store.putJoinRequest(
+                "r1", Collections.<String, String>emptyMap(),
+                Collections.<String>emptyList(), 60));
+        assertNull(store.getJoinRequest("r1"));
+        assertTrue(store.listJoinRequests("u1").isEmpty());
+        assertFalse(store.resolveJoinRequest("r1", "DENIED", null));
     }
 
 }
