@@ -93,7 +93,26 @@ angular.module('guacJdbcJoinRequests').factory('joinRequestService', ['$injector
 
 }]);
 
-angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($injector) {
+// Newcomer: hold a connection that another user is using until it is admitted
+// or enforced. Gating connect(), not the route, keeps deep links and the
+// single-connection home redirect rendering normally.
+angular.module('guacJdbcJoinRequests').config(['$provide', function gateConnect($provide) {
+    $provide.decorator('ManagedClient', ['$delegate', '$injector',
+            function decorateManagedClient($delegate, $injector) {
+
+        var originalConnect = $delegate.connect;
+
+        $delegate.connect = function gatedConnect(managedClient, width, height) {
+            return $injector.get('joinGate').connect(managedClient, width, height, originalConnect);
+        };
+
+        return $delegate;
+
+    }]);
+}]);
+
+angular.module('guacJdbcJoinRequests').factory('joinGate', ['$injector',
+        function joinGate($injector) {
 
     var $interval          = $injector.get('$interval');
     var $location          = $injector.get('$location');
@@ -107,9 +126,6 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
     var JDBC_DATA_SOURCES = ['postgresql', 'mysql', 'sqlserver'];
     var POLL_MS = 3000;
 
-    // Client IDs whose next navigation skips the in-use check
-    var cleared = {};
-
     var isNotFound = function isNotFound(error) {
         return !!error && (error.type === 'NOT_FOUND' || error.statusCode === 404);
     };
@@ -120,32 +136,33 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
         guacNotification.showStatus(status);
     };
 
-    var connect = function connect(id) {
+    // Gives up on the held connection and leaves the client page
+    var abandon = function abandon(managedClient) {
         guacNotification.showStatus(false);
-        cleared[id] = true;
-        $location.url('/client/' + id);
+        guacClientManager.removeManagedClient(managedClient.id);
+        $location.url('/');
     };
 
-    var enforce = function enforce(id, identifier) {
+    var enforce = function enforce(gate, identifier) {
         joinRequestService.enforce(identifier.dataSource, identifier.id)
-            .then(function enforced() { connect(id); }, guacNotification.SHOW_REQUEST_ERROR);
+            .then(gate.proceed, guacNotification.SHOW_REQUEST_ERROR);
     };
 
     var waitForAdmission;
 
-    var outcome = function outcome(id, identifier, textKey, canRetry) {
+    var outcome = function outcome(gate, identifier, textKey, canRetry) {
         var actions = [];
         if (canRetry)
             actions.push({ name : 'JOIN.ACTION_RETRY',
-                callback : function retry() { waitForAdmission(id, identifier); } });
+                callback : function retry() { waitForAdmission(gate, identifier); } });
         actions.push({ name : 'JOIN.ACTION_ENFORCE', className : 'danger',
-            callback : function forced() { enforce(id, identifier); } });
+            callback : function forced() { enforce(gate, identifier); } });
         actions.push({ name : 'JOIN.ACTION_CANCEL',
-            callback : function cancel() { guacNotification.showStatus(false); } });
+            callback : function cancel() { abandon(gate.managedClient); } });
         show({ title : 'JOIN.DIALOG_HEADER_WAITING', text : { key : textKey }, actions : actions });
     };
 
-    waitForAdmission = function waitForAdmission(id, identifier) {
+    waitForAdmission = function waitForAdmission(gate, identifier) {
 
         joinRequestService.createRequest(identifier.dataSource, identifier.id)
                 .then(function requested(created) {
@@ -168,17 +185,20 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
                 text    : { key : 'JOIN.TEXT_WAITING' },
                 actions : [
                     { name : 'JOIN.ACTION_ENFORCE', className : 'danger',
-                        callback : function forced() { stop(); enforce(id, identifier); } },
+                        callback : function forced() { stop(); enforce(gate, identifier); } },
                     { name : 'JOIN.ACTION_CANCEL',
                         callback : function cancelled() {
                             stop();
                             joinRequestService.cancelRequest(identifier.dataSource, created.id);
-                            guacNotification.showStatus(false);
+                            abandon(gate.managedClient);
                         } }
                 ]
             });
 
-            stopRouteWatch = $rootScope.$on('$routeChangeSuccess', stop);
+            stopRouteWatch = $rootScope.$on('$routeChangeStart', function leaving() {
+                stop();
+                joinRequestService.cancelRequest(identifier.dataSource, created.id);
+            });
 
             poll = $interval(function check() {
                 joinRequestService.getRequest(identifier.dataSource, created.id)
@@ -186,6 +206,7 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
                     if (result.status === 'ADMITTED') {
                         stop();
                         guacNotification.showStatus(false);
+                        guacClientManager.removeManagedClient(gate.managedClient.id);
                         var sharedId = ClientIdentifier.toString({
                             dataSource : identifier.dataSource + '-shared',
                             type       : ClientIdentifier.Types.CONNECTION,
@@ -195,59 +216,92 @@ angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($
                     }
                     else if (result.status === 'DENIED') {
                         stop();
-                        outcome(id, identifier, 'JOIN.TEXT_DENIED', false);
+                        outcome(gate, identifier, 'JOIN.TEXT_DENIED', false);
                     }
                     else if (result.status === 'FREE' || result.status === 'CANCELLED') {
                         stop();
-                        connect(id);
+                        gate.proceed();
                     }
                 }, function failed(error) {
                     stop();
                     if (isNotFound(error))
-                        outcome(id, identifier, 'JOIN.TEXT_EXPIRED', true);
+                        outcome(gate, identifier, 'JOIN.TEXT_EXPIRED', true);
                     else
-                        connect(id);
+                        gate.proceed();
                 });
             }, POLL_MS);
 
         }, function notRequested() {
             // Free by now, or the mailbox is unavailable: never block connecting
-            connect(id);
+            gate.proceed();
         });
 
     };
 
-    // Newcomer: check before a connection is opened
-    $rootScope.$on('$routeChangeStart', function checkInUse(event, next) {
+    return {
 
-        if (!next || !next.$$route || next.$$route.originalPath !== '/client/:id')
-            return;
+        /**
+         * Connects the given client now, or once admitted or enforced if
+         * another user holds the connection. Called for every display resize
+         * until the client leaves the IDLE state.
+         */
+        connect : function connect(managedClient, width, height, originalConnect) {
 
-        var id = next.params.id;
-        if (next.params.key || cleared[id]) {
-            delete cleared[id];
-            return;
+            var identifier = ClientIdentifier.fromString(managedClient.id);
+            if (managedClient.clientState.connectionState !== ManagedClientState.ConnectionState.IDLE
+                    || identifier.type !== ClientIdentifier.Types.CONNECTION
+                    || JDBC_DATA_SOURCES.indexOf(identifier.dataSource) === -1)
+                return originalConnect(managedClient, width, height);
+
+            var gate = managedClient.$$joinGate;
+            if (gate) {
+                gate.width = width;
+                gate.height = height;
+                if (gate.cleared)
+                    return originalConnect(managedClient, width, height);
+                return;
+            }
+
+            gate = managedClient.$$joinGate = {
+                managedClient : managedClient,
+                width         : width,
+                height        : height,
+                cleared       : false
+            };
+
+            gate.proceed = function proceed() {
+                guacNotification.showStatus(false);
+                gate.cleared = true;
+                originalConnect(managedClient, gate.width, gate.height);
+            };
+
+            joinRequestService.getStatus(identifier.dataSource, identifier.id)
+                    .then(function checked(status) {
+                if (status.state === 'inUse')
+                    waitForAdmission(gate, identifier);
+                else
+                    gate.proceed();
+            }, function unchecked() {
+                gate.proceed();
+            });
+
         }
 
-        var identifier = ClientIdentifier.fromString(id);
-        if (identifier.type !== ClientIdentifier.Types.CONNECTION
-                || JDBC_DATA_SOURCES.indexOf(identifier.dataSource) === -1
-                || id in guacClientManager.getManagedClients())
-            return;
+    };
 
-        event.preventDefault();
+}]);
 
-        joinRequestService.getStatus(identifier.dataSource, identifier.id)
-                .then(function checked(status) {
-            if (status.state === 'inUse')
-                waitForAdmission(id, identifier);
-            else
-                connect(id);
-        }, function unchecked() {
-            connect(id);
-        });
+angular.module('guacJdbcJoinRequests').run(['$injector', function joinRequests($injector) {
 
-    });
+    var $interval          = $injector.get('$interval');
+    var ClientIdentifier   = $injector.get('ClientIdentifier');
+    var guacClientManager  = $injector.get('guacClientManager');
+    var guacNotification   = $injector.get('guacNotification');
+    var joinRequestService = $injector.get('joinRequestService');
+    var ManagedClientState = $injector.get('ManagedClientState');
+
+    var JDBC_DATA_SOURCES = ['postgresql', 'mysql', 'sqlserver'];
+    var POLL_MS = 3000;
 
     // Connected user: answer requests to join
     var shownRequest = null;
