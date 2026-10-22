@@ -36,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.GuacamoleServerBusyException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.ClusterKillHandler;
@@ -77,6 +78,12 @@ public class RedisClusterStore implements ClusterStore {
 
     private static final String RECORD_AUTH_FAILURE_SCRIPT =
             "/org/apache/guacamole/cluster/redis/record-auth-failure.lua";
+
+    private static final String PUT_JOIN_REQUEST_SCRIPT =
+            "/org/apache/guacamole/cluster/redis/put-join-request.lua";
+
+    private static final String RESOLVE_JOIN_REQUEST_SCRIPT =
+            "/org/apache/guacamole/cluster/redis/resolve-join-request.lua";
 
     private final RedisClient client;
 
@@ -120,6 +127,8 @@ public class RedisClusterStore implements ClusterStore {
     private volatile ClusterLogoutHandler logoutHandler;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final LuaScript recordAuthFailure = LuaScript.load(RECORD_AUTH_FAILURE_SCRIPT);
+    private final LuaScript putJoinRequest = LuaScript.load(PUT_JOIN_REQUEST_SCRIPT);
+    private final LuaScript resolveJoinRequest = LuaScript.load(RESOLVE_JOIN_REQUEST_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
 
@@ -827,6 +836,120 @@ public class RedisClusterStore implements ClusterStore {
             return null;
         }
 
+    }
+
+    /**
+     * Records a failed join request operation and returns the exception to
+     * throw for it.
+     *
+     * @param operation
+     *     The name of the failed operation.
+     *
+     * @param e
+     *     The underlying Redis failure.
+     *
+     * @return
+     *     An exception reporting join requests as temporarily unavailable.
+     */
+    private GuacamoleServerBusyException joinRequestFailure(String operation,
+            RedisException e) {
+        ClusterMetrics.counter("guacamole_cluster_operation_failures_total",
+                "operation", operation);
+        available = false;
+        unavailableSince = System.currentTimeMillis();
+        logger.warn("Join request operation \"{}\" failed.", operation, e);
+        return new GuacamoleServerBusyException("Join requests are temporarily unavailable.", e);
+    }
+
+    @Override
+    public void putJoinRequest(String id, Map<String, String> fields,
+            Collection<String> recordUuids, int ttlSeconds) throws GuacamoleException {
+
+        List<String> keys = new ArrayList<String>();
+        keys.add(ClusterKeys.joinRequest(id));
+        for (String recordUuid : recordUuids)
+            keys.add(ClusterKeys.joinRequestIndex(recordUuid));
+
+        List<String> args = new ArrayList<String>();
+        args.add(Integer.toString(ttlSeconds));
+        args.add(id);
+        for (Map.Entry<String, String> field : fields.entrySet()) {
+            args.add(field.getKey());
+            args.add(field.getValue());
+        }
+
+        try {
+            putJoinRequest.eval(commands(), keys.toArray(new String[0]),
+                    args.toArray(new String[0]));
+            available = true;
+        }
+        catch (RedisException e) {
+            throw joinRequestFailure("putJoinRequest", e);
+        }
+
+    }
+
+    @Override
+    public Map<String, String> getJoinRequest(String id) throws GuacamoleException {
+        try {
+            Map<String, String> fields = commands().hgetall(ClusterKeys.joinRequest(id));
+            available = true;
+            return fields.isEmpty() ? null : fields;
+        }
+        catch (RedisException e) {
+            throw joinRequestFailure("getJoinRequest", e);
+        }
+    }
+
+    @Override
+    public Collection<String> listJoinRequests(String recordUuid) throws GuacamoleException {
+        try {
+            Collection<String> ids = commands().smembers(ClusterKeys.joinRequestIndex(recordUuid));
+            available = true;
+            return ids;
+        }
+        catch (RedisException e) {
+            throw joinRequestFailure("listJoinRequests", e);
+        }
+    }
+
+    @Override
+    public boolean resolveJoinRequest(String id, String status, String shareKey)
+            throws GuacamoleException {
+        try {
+            long resolved = resolveJoinRequest.eval(commands(),
+                    new String[] { ClusterKeys.joinRequest(id) },
+                    new String[] { status, shareKey == null ? "" : shareKey });
+            available = true;
+            return resolved == 1;
+        }
+        catch (RedisException e) {
+            throw joinRequestFailure("resolveJoinRequest", e);
+        }
+    }
+
+    @Override
+    public void removeJoinRequest(String id) throws GuacamoleException {
+        try {
+            commands().del(ClusterKeys.joinRequest(id));
+            available = true;
+        }
+        catch (RedisException e) {
+            throw joinRequestFailure("removeJoinRequest", e);
+        }
+    }
+
+    /**
+     * For tests only: the remaining TTL of a join request, in seconds.
+     *
+     * @param id
+     *     The join request ID.
+     *
+     * @return
+     *     The TTL, or a negative value if absent or without expiry.
+     */
+    public long joinRequestTtlForTesting(String id) {
+        return commands().ttl(ClusterKeys.joinRequest(id));
     }
 
     @Override
