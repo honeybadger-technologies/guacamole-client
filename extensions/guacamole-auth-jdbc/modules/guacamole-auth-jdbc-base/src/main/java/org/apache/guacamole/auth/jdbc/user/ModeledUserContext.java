@@ -28,6 +28,9 @@ import com.google.inject.Provider;
 import java.util.Collection;
 import java.util.Date;
 import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.auth.jdbc.join.JoinContextFactory;
+import org.apache.guacamole.auth.jdbc.join.JoinRequestResource;
+import org.apache.guacamole.auth.jdbc.join.JoinRequestService;
 import org.apache.guacamole.auth.jdbc.reset.PasswordResetResource;
 import org.apache.guacamole.auth.jdbc.reset.PasswordResetService;
 import org.apache.guacamole.auth.jdbc.base.RestrictedObject;
@@ -77,6 +80,18 @@ public class ModeledUserContext extends RestrictedObject
      */
     @Inject
     private PasswordResetService passwordResetService;
+
+    /**
+     * The rules for joining connections other users hold.
+     */
+    @Inject
+    private JoinRequestService joinRequestService;
+
+    /**
+     * Creates the join context of the current user.
+     */
+    @Inject
+    private JoinContextFactory joinContextFactory;
 
     @Inject
     private UserDirectory userDirectory;
@@ -220,7 +235,10 @@ public class ModeledUserContext extends RestrictedObject
 
     @Override
     public Object getResource() throws GuacamoleException {
-        return new PasswordResetResource(getCurrentUser(), passwordResetService);
+        return new JDBCUserContextResource(
+                new PasswordResetResource(getCurrentUser(), passwordResetService),
+                new JoinRequestResource(joinRequestService,
+                        joinContextFactory.create(getCurrentUser())));
     }
 
     @Override
