@@ -132,6 +132,18 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public int recordAuthenticationFailure(String address, int banDurationSeconds) {
+        // No cluster exists to count against; the caller falls back to its own
+        // replica-local tracking, which is upstream behaviour
+        return -1;
+    }
+
+    @Override
+    public int getAuthenticationFailures(String address) {
+        return -1;
+    }
+
+    @Override
     public void shutdown() {
         // No resources are held
     }

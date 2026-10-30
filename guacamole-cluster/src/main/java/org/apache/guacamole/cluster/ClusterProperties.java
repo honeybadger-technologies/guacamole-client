@@ -19,6 +19,8 @@
 
 package org.apache.guacamole.cluster;
 
+import org.apache.guacamole.GuacamoleException;
+import org.apache.guacamole.environment.Environment;
 import org.apache.guacamole.properties.BooleanGuacamoleProperty;
 import org.apache.guacamole.properties.IntegerGuacamoleProperty;
 import org.apache.guacamole.properties.LongGuacamoleProperty;
@@ -151,5 +153,27 @@ public class ClusterProperties {
         }
 
     };
+
+
+    /**
+     * Returns whether cluster coordination is enabled.
+     *
+     * This lives here rather than on ClusterModule so that it can be read
+     * without Guice on the classpath. ClusterModule extends AbstractModule, so
+     * merely naming that class drags Guice into any extension that asks the
+     * question -- guacamole-auth-ban among them.
+     *
+     * @param environment
+     *     The Guacamole server environment.
+     *
+     * @return
+     *     true if cluster coordination is enabled.
+     *
+     * @throws GuacamoleException
+     *     If the property cannot be read.
+     */
+    public static boolean isEnabled(Environment environment) throws GuacamoleException {
+        return environment.getProperty(CLUSTER_ENABLED, false);
+    }
 
 }

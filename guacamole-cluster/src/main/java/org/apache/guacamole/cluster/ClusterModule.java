@@ -64,7 +64,7 @@ public class ClusterModule extends AbstractModule {
      *     If the property cannot be read.
      */
     public static boolean isEnabled(Environment environment) throws GuacamoleException {
-        return environment.getProperty(ClusterProperties.CLUSTER_ENABLED, false);
+        return ClusterProperties.isEnabled(environment);
     }
 
     private String resolveNodeId() throws GuacamoleException {

@@ -22,6 +22,8 @@ package org.apache.guacamole.auth.ban;
 import org.apache.guacamole.auth.ban.status.AuthenticationFailureTracker;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.auth.ban.status.InMemoryAuthenticationFailureTracker;
+import org.apache.guacamole.auth.ban.status.RedisAuthenticationFailureTracker;
+import org.apache.guacamole.cluster.ClusterProperties;
 import org.apache.guacamole.auth.ban.status.NullAuthenticationFailureTracker;
 import org.apache.guacamole.environment.Environment;
 import org.apache.guacamole.environment.LocalEnvironment;
@@ -151,12 +153,49 @@ public class BanningAuthenticationListener implements Listener {
                     + "{}. Automatic banning of brute-force authentication "
                     + "attempts will be disabled.", maxAddresses);
         }
+        else if (isClusterEnabled(environment)) {
+            String redisUri = environment.getProperty(ClusterProperties.CLUSTER_REDIS_URI,
+                    "redis://localhost:6379");
+            this.tracker = new RedisAuthenticationFailureTracker(redisUri,
+                    maxAttempts, banDuration, maxAddresses);
+            logger.info("Addresses will be automatically banned for {} seconds "
+                    + "after {} failed authentication attempts, counted across "
+                    + "the whole cluster. The \"{}\" property no longer bounds "
+                    + "the number of tracked addresses -- it applies only to "
+                    + "the fallback used while Redis is unreachable.",
+                    banDuration, maxAttempts, MAX_ADDRESSES.getName());
+        }
         else {
             this.tracker = new InMemoryAuthenticationFailureTracker(maxAttempts, banDuration, maxAddresses);
             logger.info("Addresses will be automatically banned for {} "
                     + "seconds after {} failed authentication attempts. Up "
                     + "to {} unique addresses will be tracked/banned at any "
                     + "given time.", banDuration, maxAttempts, maxAddresses);
+        }
+
+    }
+
+    /**
+     * Returns whether cluster coordination is enabled, treating an unreadable
+     * property as disabled. A misconfigured cluster property must not stop this
+     * extension from banning anything.
+     *
+     * @param environment
+     *     The environment to read the property from.
+     *
+     * @return
+     *     true if cluster coordination is enabled, false otherwise.
+     */
+    private boolean isClusterEnabled(Environment environment) {
+
+        try {
+            return ClusterProperties.isEnabled(environment);
+        }
+
+        catch (GuacamoleException e) {
+            logger.warn("Unable to determine whether clustering is enabled. "
+                    + "Authentication failures will be tracked per-replica.", e);
+            return false;
         }
 
     }
