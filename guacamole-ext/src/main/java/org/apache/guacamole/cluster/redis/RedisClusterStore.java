@@ -24,6 +24,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.SslOptions;
+import io.lettuce.core.ZAddArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
@@ -394,7 +395,34 @@ public class RedisClusterStore implements ClusterStore {
 
     }
 
-    /**
+        /**
+     * Returns the per-user seat keys a tunnel may hold, as written by the
+     * seat script for "max-connections-per-user" limits. Unlike the index
+     * keys, a seat is only present when a per-user limit applied at connect
+     * time, so callers must not create one that is absent.
+     *
+     * @param registration
+     *     The tunnel whose per-user seat keys should be returned.
+     *
+     * @return
+     *     The per-user seat key for the tunnel's connection, plus the one for
+     *     its balancing group if it has one.
+     */
+    private List<String> seatKeys(TunnelRegistration registration) {
+
+        List<String> keys = new ArrayList<String>(2);
+        keys.add(ClusterKeys.userConnectionSeat(registration.getUsername(),
+                registration.getConnectionIdentifier()));
+
+        if (registration.getGroupIdentifier() != null)
+            keys.add(ClusterKeys.userGroupSeat(registration.getUsername(),
+                    registration.getGroupIdentifier()));
+
+        return keys;
+
+    }
+
+/**
      * Returns every sorted set the given tunnel is indexed in. The group index
      * is included only when the tunnel was established through a balancing
      * group.
@@ -566,6 +594,11 @@ public class RedisClusterStore implements ClusterStore {
                 for (String key : indexKeys(registration))
                     commands.zadd(key, (double) now, registration.getTunnelUuid());
 
+                // Refresh per-user seats too, or the seat script prunes them
+                // as stale. XX only updates a seat that was actually taken
+                for (String key : seatKeys(registration))
+                    commands.zadd(key, ZAddArgs.Builder.xx(), (double) now,
+                            registration.getTunnelUuid());
 
                 commands.pexpire(ClusterKeys.tunnel(registration.getTunnelUuid()), staleWindowMs);
 
