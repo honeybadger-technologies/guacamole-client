@@ -28,21 +28,28 @@ import org.apache.guacamole.environment.Environment;
 import org.apache.guacamole.rest.auth.AuthenticationService;
 
 /**
- * Binds the metrics endpoint, when it is configured.
+ * Guice servlet module which binds the cluster metrics endpoint at
+ * "/metrics". The endpoint is always bound, but answers only when the
+ * "cluster-metrics-enabled" property is true, and only to requests carrying
+ * the bearer token configured by "cluster-metrics-token". Startup is refused
+ * if the endpoint is enabled without a token, so that it can never be served
+ * unguarded.
  */
 public class MetricsModule extends ServletModule {
 
     /**
-     * The Guacamole server environment.
+     * The Guacamole server environment, from which the metrics-related
+     * properties are read.
      */
     private final Environment environment;
 
     /**
-     * Creates a module serving the given store's metrics.
+     * Creates a new MetricsModule which configures the metrics endpoint using
+     * the properties of the given environment.
      *
      * @param environment
-     *     The Guacamole server environment.
-     *
+     *     The Guacamole server environment, from which the metrics-related
+     *     properties are read.
      */
     public MetricsModule(Environment environment) {
         this.environment = environment;
@@ -53,17 +60,20 @@ public class MetricsModule extends ServletModule {
 
         try {
 
+            // Read whether the endpoint is enabled and the token guarding it
             boolean enabled = environment.getProperty(
                     ClusterProperties.CLUSTER_METRICS_ENABLED, false);
 
             String token = environment.getProperty(
                     ClusterProperties.CLUSTER_METRICS_TOKEN);
 
+            // Fail closed: an enabled endpoint without a token is a
+            // configuration error, not an open endpoint
             if (enabled && (token == null || token.isEmpty()))
                 throw new GuacamoleServerException("\"cluster-metrics-enabled\" "
                         + "is true but \"cluster-metrics-token\" is unset. The "
-                        + "metrics endpoint is reachable through the same "
-                        + "Ingress as the application, so it is never served "
+                        + "metrics endpoint is reachable wherever the web "
+                        + "application is, so it is never served "
                         + "unguarded.");
 
             // getProvider defers resolution until after the injector exists,
@@ -74,6 +84,8 @@ public class MetricsModule extends ServletModule {
 
         }
 
+        // Surface property errors as Guice configuration errors, which abort
+        // creation of the injector and therefore startup
         catch (GuacamoleException e) {
             addError(e);
         }

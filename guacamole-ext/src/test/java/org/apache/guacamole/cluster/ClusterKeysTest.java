@@ -24,8 +24,18 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+/**
+ * Unit tests for ClusterKeys, which builds every Redis key used by cluster
+ * coordination. These tests pin the exact key shapes, since all replicas must
+ * agree on them, and verify that user-supplied key segments are escaped so that
+ * two different identifier pairs can never produce the same key.
+ */
 public class ClusterKeysTest {
 
+    /**
+     * Verifies that each key builder, and the ALL_INDEX constant, produce the
+     * exact key strings expected by the Lua scripts and by every other replica.
+     */
     @Test
     public void buildsExpectedKeyShapes() {
         assertEquals("guac:idx:conn:7", ClusterKeys.connectionIndex("7"));
@@ -38,6 +48,12 @@ public class ClusterKeysTest {
         assertEquals("guac:route:$xyz", ClusterKeys.route("$xyz"));
     }
 
+    /**
+     * Verifies that a ":" within a username or connection identifier is
+     * escaped, so that moving the separator between segments cannot make two
+     * different user/connection pairs share one seat key and therefore one seat
+     * count.
+     */
     @Test
     public void escapesSeparatorsSoSegmentsCannotCollide() {
 
@@ -49,6 +65,11 @@ public class ClusterKeysTest {
 
     }
 
+    /**
+     * Verifies that "%" is itself escaped, so that a literal segment which
+     * already looks like an escape sequence cannot collide with the escaped
+     * form of a different segment.
+     */
     @Test
     public void escapesPercentSoEscapingIsUnambiguous() {
 

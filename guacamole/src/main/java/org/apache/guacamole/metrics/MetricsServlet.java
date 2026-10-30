@@ -33,8 +33,9 @@ import org.apache.guacamole.rest.auth.AuthenticationService;
  * format, guarded by a bearer token.
  *
  * The endpoint cannot require a Guacamole session, because a scraper does not
- * have one, and it cannot be open, because the Ingress routes every path to
- * this application and offers no per-path deny.
+ * have one, and it cannot be left open, because the reverse proxy or ingress
+ * in front of Guacamole typically routes every path to this application and
+ * offers no per-path deny.
  */
 public class MetricsServlet extends HttpServlet {
 
@@ -49,12 +50,14 @@ public class MetricsServlet extends HttpServlet {
     private static final String BEARER = "Bearer ";
 
     /**
-     * Whether the endpoint is served at all.
+     * Whether the endpoint is served at all. When false, every request
+     * receives a 404, as if the endpoint did not exist.
      */
     private final boolean enabled;
 
     /**
-     * The bearer token a request must carry, which may be null.
+     * The bearer token a request must carry, which may be null. If null, every
+     * request is refused.
      */
     private final String token;
 
@@ -68,11 +71,19 @@ public class MetricsServlet extends HttpServlet {
     private final Provider<AuthenticationService> authenticationService;
 
     /**
-     * The status and body of a single metrics request.
+     * The status and body of a single metrics request, as decided by
+     * render() independently of the Servlet API.
      */
     public static class Result {
 
+        /**
+         * The HTTP status to send.
+         */
         private final int status;
+
+        /**
+         * The body to send, which is empty for every refusal.
+         */
         private final String body;
 
         /**
@@ -112,13 +123,16 @@ public class MetricsServlet extends HttpServlet {
     }
 
     /**
-     * Creates a servlet serving the given store's metrics.
+     * Creates a new MetricsServlet which serves the cluster metrics registry
+     * to requests carrying the given bearer token.
      *
      * @param enabled
-     *     Whether the endpoint is served at all.
+     *     Whether the endpoint is served at all. If false, every request
+     *     receives a 404.
      *
      * @param token
-     *     The bearer token a request must carry.
+     *     The bearer token a request must carry, which may be null. If null,
+     *     every request is refused.
      *
      * @param authenticationService
      *     Supplies the authentication service holding the store whose gauges
@@ -150,9 +164,13 @@ public class MetricsServlet extends HttpServlet {
         if (!enabled)
             return new Result(HttpServletResponse.SC_NOT_FOUND, "");
 
+        // Refuse anything not carrying the configured token, revealing
+        // nothing in the body
         if (!authorized(authorization))
             return new Result(HttpServletResponse.SC_UNAUTHORIZED, "");
 
+        // Refresh the store-derived gauges so the scrape reflects current
+        // state rather than the values of the previous scrape
         if (authenticationService != null)
             authenticationService.get().getClusterStore().publishMetrics();
 
@@ -164,10 +182,13 @@ public class MetricsServlet extends HttpServlet {
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws IOException {
 
+        // Decide the outcome from the Authorization header alone
         Result result = render(request.getHeader("Authorization"));
 
         response.setStatus(result.getStatus());
 
+        // Only a successful request carries a body; refusals send the status
+        // alone
         if (result.getStatus() == HttpServletResponse.SC_OK) {
             response.setContentType(CONTENT_TYPE);
             response.getWriter().write(result.getBody());
@@ -183,19 +204,23 @@ public class MetricsServlet extends HttpServlet {
      *     The Authorization header, which may be null.
      *
      * @return
-     *     true if the header authorises the request.
+     *     true if the header authorises the request, false otherwise.
      */
     private boolean authorized(String header) {
 
+        // Refuse a missing header, an unconfigured token, or any scheme other
+        // than Bearer
         if (header == null || token == null || !header.startsWith(BEARER))
             return false;
 
+        // A length mismatch can be refused early, as the token length is not
+        // the secret being protected
         String presented = header.substring(BEARER.length());
         if (presented.length() != token.length())
             return false;
 
-        // Constant time in the length that matters: a timing oracle on a
-        // scrape token is cheap to remove and awkward to explain later
+        // Compare every character regardless of where the first mismatch
+        // occurs, so that response timing reveals nothing about the token
         int difference = 0;
         for (int i = 0; i < token.length(); i++)
             difference |= presented.charAt(i) ^ token.charAt(i);

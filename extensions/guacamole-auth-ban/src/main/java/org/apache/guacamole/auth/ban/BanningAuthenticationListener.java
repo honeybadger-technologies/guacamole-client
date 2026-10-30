@@ -153,10 +153,13 @@ public class BanningAuthenticationListener implements Listener {
                     + "{}. Automatic banning of brute-force authentication "
                     + "attempts will be disabled.", maxAddresses);
         }
+        // With clustering enabled, count failures in Redis so that the limit
+        // applies across all replicas rather than to each one separately
         else if (isClusterEnabled(environment)) {
             String redisUri = environment.getProperty(ClusterProperties.CLUSTER_REDIS_URI,
                     "redis://localhost:6379");
-            // Without the private CA every TLS handshake fails and banning
+            // The CA certificate must be passed through, or every TLS
+            // handshake with a privately-signed Redis fails and banning
             // silently falls back to per-replica counting
             this.tracker = new RedisAuthenticationFailureTracker(redisUri,
                     environment.getProperty(ClusterProperties.CLUSTER_REDIS_CA_CERT),

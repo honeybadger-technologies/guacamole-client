@@ -29,7 +29,8 @@ import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMethod;
 
 /**
- * The set of guacd instances this replica may connect to.
+ * The set of guacd instances this replica may connect to. Implementations are
+ * obtained through the static factory methods fromHostList() and fromDns().
  *
  * Membership is owned by the platform, not by Guacamole: a DNS-backed pool
  * resolves a Kubernetes headless Service, which contains only ready pods.
@@ -42,6 +43,10 @@ import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMetho
 public abstract class GuacdPool {
 
     /**
+     * Returns every guacd instance in this pool which is currently believed
+     * to be available. The returned list may be cached and must not be
+     * modified by the caller.
+     *
      * @return
      *     Every guacd instance currently believed to be available.
      *
@@ -69,10 +74,12 @@ public abstract class GuacdPool {
     public static GuacdPool fromHostList(String hostList, final int defaultPort,
             final EncryptionMethod encryptionMethod) {
 
+        // The list is parsed once, up front, and never changes afterwards
         final List<GuacdEndpoint> endpoints = new ArrayList<GuacdEndpoint>();
 
         for (String entry : hostList.split(",")) {
 
+            // Skip empty entries, such as those produced by a trailing comma
             String trimmed = entry.trim();
             if (trimmed.isEmpty())
                 continue;
@@ -126,19 +133,35 @@ public abstract class GuacdPool {
 
         return new GuacdPool() {
 
+            /**
+             * The endpoints produced by the most recent successful
+             * resolution, or an empty list if the hostname has never been
+             * resolved successfully.
+             */
             private volatile List<GuacdEndpoint> cached = Collections.emptyList();
+
+            /**
+             * The time at which the cached endpoints were resolved, in
+             * milliseconds since the epoch, or zero if the hostname has never
+             * been resolved successfully.
+             */
             private volatile long resolvedAt = 0L;
 
             @Override
             public synchronized List<GuacdEndpoint> getCandidates()
                     throws GuacamoleException {
 
+                // Reuse a recent resolution. The cache is empty only until
+                // the first successful resolution, so an empty cache always
+                // triggers a lookup
                 long now = System.currentTimeMillis();
                 if (!cached.isEmpty() && now - resolvedAt < cacheMs)
                     return cached;
 
                 try {
 
+                    // A headless Service returns one address per ready pod,
+                    // each of which is a separate guacd instance
                     InetAddress[] addresses = InetAddress.getAllByName(hostname);
                     List<GuacdEndpoint> endpoints =
                             new ArrayList<GuacdEndpoint>(addresses.length);

@@ -62,9 +62,10 @@ public class RestrictedGuacamoleTunnelService
     private JDBCEnvironment environment;
 
     /**
-     * Cluster-wide seat accounting. Bound to NoOpClusterStore when clustering
-     * is disabled, in which case every acquire falls through to the in-memory
-     * counters below.
+     * The cluster store, used to enforce concurrency limits across every
+     * replica rather than per replica. Bound to NoOpClusterStore when
+     * clustering is disabled, which always reports itself unavailable, so
+     * every acquire falls through to the in-memory counters below.
      */
     @Inject
     private ClusterStore clusterStore;
@@ -142,20 +143,25 @@ public class RestrictedGuacamoleTunnelService
     }
 
     /**
-     * Attempts to take cluster-wide seats for one connection.
+     * Attempts to atomically take, in the cluster store, both the overall seat
+     * and the per-user seat for one connection, honouring that connection's
+     * configured maximum concurrent connections and maximum concurrent
+     * connections per user across every replica.
      *
      * @param seatToken
-     *     Identifier for the seats.
+     *     The unique token identifying the seats taken by this connection
+     *     attempt. The same token must later be passed when releasing them.
      *
      * @param username
-     *     The user connecting.
+     *     The username of the user connecting.
      *
      * @param connection
      *     The connection being acquired.
      *
      * @return
-     *     The outcome, or null if the cluster store is unavailable and the
-     *     caller must fall back to replica-local accounting.
+     *     The result of the attempt (success, or which limit was reached), or
+     *     null if the cluster store is unavailable and the caller must fall
+     *     back to replica-local accounting.
      *
      * @throws GuacamoleException
      *     If the connection's configured limits cannot be read.
@@ -163,6 +169,8 @@ public class RestrictedGuacamoleTunnelService
     private SeatResult tryClusterAcquire(String seatToken, String username,
             ModeledConnection connection) throws GuacamoleException {
 
+        // Skip straight to local accounting while the store is known to be
+        // down, rather than paying a Redis timeout on every connection
         if (!clusterStore.isAvailable())
             return null;
 
@@ -174,8 +182,8 @@ public class RestrictedGuacamoleTunnelService
             return clusterStore.acquireSeats(request);
         }
 
-        // A Redis outage must not become a connection outage. Limits degrade to
-        // per-replica, which is exactly upstream behavior (spec 6.1).
+        // A Redis outage must not become a connection outage. Limits degrade
+        // to per-replica enforcement, exactly as without clustering.
         catch (GuacamoleException e) {
             logger.error("Cluster seat acquisition failed for connection \"{}\". "
                     + "Concurrency limits are now enforced per replica only.",
@@ -301,7 +309,7 @@ public class RestrictedGuacamoleTunnelService
                 continue;
 
             // Redis unavailable: fall back to replica-local accounting, which
-            // is exactly upstream behavior
+            // behaves exactly as without clustering
             Seat seat = new Seat(username, connection.getIdentifier());
             if (tryAdd(activeSeats, seat,
                     connection.getMaxConnectionsPerUser())) {
@@ -338,8 +346,9 @@ public class RestrictedGuacamoleTunnelService
     protected void release(RemoteAuthenticatedUser user,
             ModeledConnection connection, String seatToken) {
 
-        // Release cluster seats first; the local counters are the fallback and
-        // are always safe to decrement
+        // Release cluster seats first. The local seats are released
+        // unconditionally afterwards: if they were never taken (the cluster
+        // granted the seats), removing them is a no-op.
         try {
             if (clusterStore.isAvailable())
                 clusterStore.releaseSeats(SeatRequestBuilder.forConnection(
@@ -368,6 +377,8 @@ public class RestrictedGuacamoleTunnelService
         // Get username
         String username = user.getIdentifier();
 
+        // Attempt the cluster-wide group seats first, leaving result null if
+        // Redis is unavailable or cannot answer
         SeatResult result = null;
         if (clusterStore.isAvailable()) {
             try {
@@ -377,7 +388,8 @@ public class RestrictedGuacamoleTunnelService
                         connectionGroup.getMaxConnectionsPerUser()));
             }
 
-            // A Redis outage must not become a connection outage (spec 6.1)
+            // A Redis outage must not become a connection outage; fall back to
+            // per-replica limits below
             catch (GuacamoleException e) {
                 logger.error("Cluster seat acquisition failed for group \"{}\". "
                         + "Group limits are now enforced per replica only.",
@@ -394,7 +406,8 @@ public class RestrictedGuacamoleTunnelService
         if (result == SeatResult.USER_GROUP_LIMIT)
             throw new GuacamoleClientTooManyException("Cannot connect. Connection group already in use by this user.");
 
-        // Redis unavailable: replica-local accounting, as upstream
+        // Redis unavailable: replica-local accounting, exactly as without
+        // clustering
         Seat seat = new Seat(username, connectionGroup.getIdentifier());
         if (tryAdd(activeGroupSeats, seat,
                 connectionGroup.getMaxConnectionsPerUser())) {
@@ -421,6 +434,8 @@ public class RestrictedGuacamoleTunnelService
     protected void release(RemoteAuthenticatedUser user,
             ModeledConnectionGroup connectionGroup, String seatToken) {
 
+        // Release cluster seats first, then the local seats, which are a
+        // no-op to remove if they were never taken
         try {
             if (clusterStore.isAvailable())
                 clusterStore.releaseSeats(SeatRequestBuilder.forGroup(

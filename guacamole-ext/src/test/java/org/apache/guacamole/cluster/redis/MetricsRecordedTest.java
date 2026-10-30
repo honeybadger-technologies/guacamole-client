@@ -33,13 +33,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class MetricsRecordedTest {
 
+    /**
+     * A Redis URI on reserved port 1, where nothing listens, so that every
+     * store operation degrades.
+     */
     private static final String UNREACHABLE = "redis://127.0.0.1:1";
 
+    /**
+     * Clears every metric recorded by earlier tests, since
+     * {@link ClusterMetrics} is static and shared across the JVM.
+     */
     @BeforeEach
     public void setUp() {
         ClusterMetrics.reset();
     }
 
+    /**
+     * Verifies that a read which fails because Redis is unreachable
+     * increments the operation failure counter, labelled with the operation
+     * that degraded.
+     */
     @Test
     public void aDegradedReadIsCounted() {
 
@@ -62,6 +75,10 @@ public class MetricsRecordedTest {
 
     }
 
+    /**
+     * Verifies that, after a failed operation marks the store unavailable,
+     * publishing metrics reports the store availability gauge as 0.
+     */
     @Test
     public void availabilityIsPublishedAsAGauge() {
 
@@ -83,6 +100,10 @@ public class MetricsRecordedTest {
 
     }
 
+    /**
+     * Verifies that failures provoked by the startup self-check are not
+     * recorded as operation failures.
+     */
     @Test
     public void theSelfCheckDoesNotCountAsRuntimeDegradation() {
 

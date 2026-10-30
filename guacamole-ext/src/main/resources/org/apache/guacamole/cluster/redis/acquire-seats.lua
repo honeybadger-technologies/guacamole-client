@@ -15,16 +15,38 @@
 -- specific language governing permissions and limitations
 -- under the License.
 
--- Atomically prunes stale members, verifies every limit, and takes seats.
+-- Atomically prunes stale members, verifies every applicable concurrency
+-- limit, and claims a seat under each of them for one tunnel.
 --
--- KEYS    one sorted set per limit-bearing index, in caller-defined order
--- ARGV[1] tunnel UUID
--- ARGV[2] stale window, in milliseconds
--- ARGV[i+2] limit for KEYS[i]; zero or negative means unlimited
+-- Each limit (for example, the maximum number of concurrent connections to a
+-- connection, or per user) is represented by one sorted set whose members are
+-- tunnel UUIDs and whose scores are the Redis server time, in milliseconds,
+-- at which each member was last refreshed by its replica's heartbeat. A member
+-- whose score is older than the stale window belongs to a replica that has
+-- stopped heartbeating, and no longer occupies a seat.
 --
--- Returns 0 on success, or the 1-based index of the key whose limit was
--- reached. Time is taken from the Redis server so that replica clock drift
--- cannot affect staleness.
+-- KEYS[i]    The sorted set for the i-th limit, in an order defined by the
+--            caller. The caller maps a non-zero return value back to the
+--            limit that was reached using this order.
+--
+-- ARGV[1]    The UUID of the tunnel requesting seats.
+-- ARGV[2]    The stale window, in milliseconds.
+-- ARGV[i+2]  The limit for KEYS[i]. Zero or negative means unlimited; the
+--            seat is still recorded so that the tunnel is counted.
+--
+-- Returns 0 if every limit allowed the tunnel and a seat was claimed under
+-- every key, or the 1-based index of the first key whose limit was reached,
+-- in which case no seat is claimed under any key. A tunnel which already
+-- holds a seat under a key is never refused by that key, so retrying an
+-- acquisition is safe and simply refreshes its score.
+--
+-- Why a script: the check and the claim must be a single atomic step. If they
+-- were separate commands, two replicas could both observe a free seat and
+-- both claim it, exceeding the limit. Redis runs a script with no other
+-- command interleaved, which makes this check-and-set safe across every
+-- replica, and guarantees that a refusal claims nothing (only stale members
+-- are pruned). Time is taken from the Redis server rather than passed in so
+-- that clock drift between replicas cannot affect staleness.
 
 local uuid  = ARGV[1]
 local stale = tonumber(ARGV[2])

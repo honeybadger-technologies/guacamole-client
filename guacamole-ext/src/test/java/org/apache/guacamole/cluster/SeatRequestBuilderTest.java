@@ -24,8 +24,19 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Unit tests for SeatRequestBuilder, which translates a connection or balancing
+ * group's concurrency limits into the ordered list of seat keys that the
+ * cluster store acquires atomically. These tests pin the key order, the failure
+ * result reported for each key, and the handling of unlimited (zero) limits.
+ */
 public class SeatRequestBuilderTest {
 
+    /**
+     * Verifies that a connection request lists the per-user seat key before the
+     * overall connection key, and that each key reports the matching failure
+     * result.
+     */
     @Test
     public void ordersPerUserLimitBeforeOverallLimit() {
 
@@ -46,11 +57,20 @@ public class SeatRequestBuilderTest {
 
     }
 
+    /**
+     * Verifies that the tunnel UUID given to the builder is carried on the
+     * resulting request, since it is the member that is added to, and later
+     * removed from, every seat key.
+     */
     @Test
     public void carriesTheSeatToken() {
         assertEquals("t1", SeatRequestBuilder.forConnection("t1", "alice", "c", 0, 0).getTunnelUuid());
     }
 
+    /**
+     * Verifies that a limit of zero still produces a seat key, with a recorded
+     * limit of zero, rather than omitting the key.
+     */
     @Test
     public void keepsUnlimitedKeysSoTheyAreStillTracked() {
 
@@ -63,6 +83,10 @@ public class SeatRequestBuilderTest {
 
     }
 
+    /**
+     * Verifies that a balancing group request uses the group seat keys, per-
+     * user first then overall, with the group-specific failure results.
+     */
     @Test
     public void buildsGroupKeys() {
 

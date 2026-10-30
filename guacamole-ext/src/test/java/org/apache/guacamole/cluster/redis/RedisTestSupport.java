@@ -29,16 +29,27 @@ import org.testcontainers.utility.DockerImageName;
  */
 public final class RedisTestSupport {
 
+    /**
+     * The Redis container shared by every Redis-backed test in this JVM. The
+     * image is pinned so that the Lua scripts the store relies upon are
+     * always exercised against the same server version.
+     */
     private static final GenericContainer<?> REDIS =
             new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine"))
                     .withExposedPorts(6379);
 
+    // Start the container once, when the first test class touches this one
     static {
         REDIS.start();
     }
 
-    private RedisTestSupport() {}
-
+    /**
+     * Returns the Lettuce URI of the shared Redis container, using the host
+     * and port Testcontainers mapped it to.
+     *
+     * @return
+     *     A "redis://" URI which reaches the shared container.
+     */
     public static String redisUri() {
         return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379);
     }

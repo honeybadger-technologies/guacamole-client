@@ -28,7 +28,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Every metric the cluster implementation publishes.
+ * A registry of every metric the cluster implementation publishes, rendered
+ * on request in the Prometheus text exposition format. Counters only ever
+ * increase; gauges hold the most recently recorded value.
  *
  * Static rather than injected on purpose: the web application and the JDBC
  * extension build separate ClusterStore instances, and an injected registry
@@ -57,8 +59,6 @@ public class ClusterMetrics {
      */
     private static final ConcurrentMap<String, String> names =
             new ConcurrentHashMap<String, String>();
-
-    private ClusterMetrics() {}
 
     /**
      * Increments an unlabelled counter.
@@ -120,12 +120,15 @@ public class ClusterMetrics {
 
         StringBuilder text = new StringBuilder();
 
+        // Sort the series so that output is stable and series sharing a
+        // metric name are rendered together under one TYPE line
         List<String> counterKeys = new ArrayList<String>(counters.keySet());
         Collections.sort(counterKeys);
 
         List<String> gaugeKeys = new ArrayList<String>(gauges.keySet());
         Collections.sort(gaugeKeys);
 
+        // Render counters, preceding each new metric name with its TYPE line
         String lastName = null;
         for (String key : counterKeys) {
             String name = names.get(key);
@@ -136,6 +139,7 @@ public class ClusterMetrics {
             text.append(key).append(' ').append(counters.get(key).get()).append('\n');
         }
 
+        // Render gauges in the same way
         lastName = null;
         for (String key : gaugeKeys) {
             String name = names.get(key);
@@ -163,6 +167,9 @@ public class ClusterMetrics {
      */
     private static void increment(String name, String key) {
 
+        // Create the series on first use. putIfAbsent() guarantees that two
+        // threads racing to create the same series end up sharing one
+        // counter, so no increment is lost
         AtomicLong counter = counters.get(key);
         if (counter == null) {
             counters.putIfAbsent(key, new AtomicLong());

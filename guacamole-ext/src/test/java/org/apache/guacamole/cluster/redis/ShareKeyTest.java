@@ -35,8 +35,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests the cluster-wide share key storage of {@link RedisClusterStore},
+ * which lets a share link issued on one replica be redeemed on any other,
+ * together with the propagation of share revocations between replicas. Runs
+ * against a real Redis started by Testcontainers, and is skipped when Docker
+ * is unavailable.
+ */
 public class ShareKeyTest {
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
     /**
@@ -49,19 +61,37 @@ public class ShareKeyTest {
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
+    /**
+     * The store under test, acting as replica "node-1".
+     */
     private RedisClusterStore store;
 
+    /**
+     * Creates a fresh store under test and flushes the shared Redis so that
+     * no state leaks between tests.
+     */
     @BeforeEach
     public void setUp() {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
         store.flushForTesting();
     }
 
+    /**
+     * Shuts down the store under test.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
     }
 
+    /**
+     * Verifies that every field of a stored share key is read back
+     * unchanged, as another replica needs all of them to join the shared
+     * connection.
+     *
+     * @throws Exception
+     *     If the share key cannot be stored or read.
+     */
     @Test
     public void storedKeyRoundTrips() throws Exception {
 
@@ -77,11 +107,25 @@ public class ShareKeyTest {
 
     }
 
+    /**
+     * Verifies that a share key which was never issued is reported as
+     * absent (null), the same as an expired key.
+     *
+     * @throws Exception
+     *     If the share key cannot be read.
+     */
     @Test
     public void unknownKeyIsNull() throws Exception {
         assertNull(store.getShareKey("never-issued"));
     }
 
+    /**
+     * Verifies that a share key stored without a sharing profile reads back
+     * with a null profile rather than failing or inventing one.
+     *
+     * @throws Exception
+     *     If the share key cannot be stored or read.
+     */
     @Test
     public void keyWithoutASharingProfileRoundTrips() throws Exception {
 
@@ -93,6 +137,13 @@ public class ShareKeyTest {
 
     }
 
+    /**
+     * Verifies that a removed share key can no longer be read, so that a
+     * revoked link stops working on every replica.
+     *
+     * @throws Exception
+     *     If the share key cannot be stored, removed or read.
+     */
     @Test
     public void removedKeyIsGone() throws Exception {
 
@@ -104,6 +155,15 @@ public class ShareKeyTest {
 
     }
 
+    /**
+     * Verifies that a share revocation published by one replica is delivered
+     * over Redis pub/sub to the revocation handler registered on another,
+     * so that users joined through a revoked key can be disconnected
+     * wherever they are.
+     *
+     * @throws Exception
+     *     If waiting for the revocation is interrupted.
+     */
     @Test
     public void revocationReachesAnotherReplica() throws Exception {
 

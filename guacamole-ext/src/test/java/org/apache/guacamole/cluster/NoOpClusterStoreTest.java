@@ -28,11 +28,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+/**
+ * Unit tests for NoOpClusterStore, the store bound when clustering is disabled
+ * or Redis cannot be used. These tests verify that it never enforces limits
+ * itself, reports itself as unavailable and unclustered so callers fall back to
+ * the standard in-memory behaviour, and holds no routes or load.
+ */
 public class NoOpClusterStoreTest {
 
+    /**
+     * An arbitrary guacd endpoint used to query tunnel counts from the store.
+     */
     private static final GuacdEndpoint ENDPOINT =
             new GuacdEndpoint("guacd-a", 4822, EncryptionMethod.NONE);
 
+    /**
+     * Verifies that acquiring seats always succeeds, even when the same request
+     * exceeding a limit of one is made twice.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void alwaysGrantsSeats() throws Exception {
 
@@ -47,6 +63,10 @@ public class NoOpClusterStoreTest {
 
     }
 
+    /**
+     * Verifies that the store reports itself as unavailable, so that the tunnel
+     * service enforces limits with its in-memory counters instead.
+     */
     @Test
     public void reportsUnavailableSoTheServiceFallsBackToLocalCounters() {
 
@@ -58,6 +78,13 @@ public class NoOpClusterStoreTest {
 
     }
 
+    /**
+     * Verifies that the store reports itself as not clustered, so that share
+     * key joins take the standard, non-clustered path.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void disabledClusteringIsNotClustered() throws Exception {
 
@@ -69,6 +96,13 @@ public class NoOpClusterStoreTest {
 
     }
 
+    /**
+     * Verifies that a connection limit of one is not enforced by the store when
+     * clustering is disabled, leaving enforcement to the in-memory counters.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void disabledClusteringGrantsEverySeatRegardlessOfLimit() throws Exception {
 
@@ -84,6 +118,13 @@ public class NoOpClusterStoreTest {
 
     }
 
+    /**
+     * Verifies that the store finds no route for any tunnel and reports zero
+     * tunnels on any guacd endpoint.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void hasNoRoutesAndNoLoad() throws Exception {
         NoOpClusterStore store = new NoOpClusterStore();

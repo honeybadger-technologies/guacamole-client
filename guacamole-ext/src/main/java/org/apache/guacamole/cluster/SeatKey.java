@@ -25,11 +25,26 @@ package org.apache.guacamole.cluster;
  */
 public class SeatKey {
 
+    /**
+     * The key of the Redis sorted set backing this limit, whose members are
+     * the tunnels currently holding a seat.
+     */
     private final String redisKey;
+
+    /**
+     * The maximum number of concurrent members permitted in the sorted set.
+     * Zero or negative means unlimited.
+     */
     private final int limit;
+
+    /**
+     * The result reported if this limit is what blocked acquisition.
+     */
     private final SeatResult failureResult;
 
     /**
+     * Creates a new SeatKey describing the given limit-bearing sorted set.
+     *
      * @param redisKey
      *     The Redis sorted set backing this limit.
      *
@@ -46,14 +61,33 @@ public class SeatKey {
         this.failureResult = failureResult;
     }
 
+    /**
+     * Returns the key of the Redis sorted set backing this limit.
+     *
+     * @return
+     *     The key of the Redis sorted set backing this limit.
+     */
     public String getRedisKey() {
         return redisKey;
     }
 
+    /**
+     * Returns the maximum number of concurrent members permitted.
+     *
+     * @return
+     *     The maximum number of concurrent members permitted, where zero or
+     *     negative means unlimited.
+     */
     public int getLimit() {
         return limit;
     }
 
+    /**
+     * Returns the result to report if this limit is what blocked acquisition.
+     *
+     * @return
+     *     The result to report if this limit is what blocked acquisition.
+     */
     public SeatResult getFailureResult() {
         return failureResult;
     }

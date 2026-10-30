@@ -26,8 +26,22 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Unit tests for GuacdPool, the source of candidate guacd instances from which
+ * a cluster replica selects. Both the static pool, parsed from a configured
+ * host list, and the DNS pool, resolved from a hostname, are covered. The DNS
+ * test resolves "localhost" only, so it needs no network access.
+ */
 public class GuacdPoolTest {
 
+    /**
+     * Verifies that a comma-separated host list is parsed into one endpoint per
+     * entry, in configured order, with surrounding whitespace ignored and each
+     * explicit port honoured.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void staticPoolParsesAConfiguredHostList() throws Exception {
 
@@ -44,6 +58,13 @@ public class GuacdPoolTest {
 
     }
 
+    /**
+     * Verifies that a host list entry with no port is given the configured
+     * default port.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void staticPoolAppliesTheDefaultPortWhenOmitted() throws Exception {
 
@@ -54,6 +75,13 @@ public class GuacdPoolTest {
 
     }
 
+    /**
+     * Verifies that a DNS pool resolves a hostname to at least one endpoint,
+     * and that each resolved endpoint uses the configured port.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void dnsPoolResolvesLocalhostToAtLeastOneEndpoint() throws Exception {
 

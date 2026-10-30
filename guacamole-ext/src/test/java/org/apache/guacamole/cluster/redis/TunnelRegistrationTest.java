@@ -40,6 +40,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+/**
+ * Tests tunnel registration, routing, load counting, heartbeat and
+ * unregistration in {@link RedisClusterStore}, which together let any replica
+ * find the guacd instance serving a connection and spread new connections by
+ * load. Runs against a real Redis started by Testcontainers, and is skipped
+ * when Docker is unavailable.
+ */
 public class TunnelRegistrationTest {
 
     /**
@@ -55,18 +62,48 @@ public class TunnelRegistrationTest {
     }
 
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
+    /**
+     * The first of two guacd instances tunnels are registered against.
+     */
     private static final GuacdEndpoint GUACD_A =
             new GuacdEndpoint("guacd-a", 4822, EncryptionMethod.NONE);
 
+    /**
+     * The second of two guacd instances tunnels are registered against, used
+     * to verify that load is counted per instance.
+     */
     private static final GuacdEndpoint GUACD_B =
             new GuacdEndpoint("guacd-b", 4822, EncryptionMethod.NONE);
 
+    /**
+     * The raw Lettuce client used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private RedisClient client;
+
+    /**
+     * The raw connection used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private StatefulRedisConnection<String, String> connection;
+
+    /**
+     * The store under test, acting as replica "node-1".
+     */
     private RedisClusterStore store;
 
+    /**
+     * Opens a raw connection to the shared Redis container, flushes it so
+     * that no state leaks between tests, and creates a fresh store under
+     * test.
+     */
     @BeforeEach
     public void setUp() {
         client = RedisClient.create(RedisTestSupport.redisUri());
@@ -75,6 +112,10 @@ public class TunnelRegistrationTest {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
     }
 
+    /**
+     * Shuts down the store under test and closes the raw connection and
+     * client, releasing every connection opened by {@link #setUp()}.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
@@ -82,6 +123,24 @@ public class TunnelRegistrationTest {
         client.shutdown();
     }
 
+    /**
+     * Returns a registration for a tunnel owned by this replica ("node-1"),
+     * established for user "alice" on connection "conn-1" through balancing
+     * group "group-1", with a history record UUID derived from the seat
+     * token.
+     *
+     * @param uuid
+     *     The seat token (tunnel UUID) of the tunnel.
+     *
+     * @param endpoint
+     *     The guacd instance serving the tunnel.
+     *
+     * @param guacdConnectionId
+     *     The connection ID assigned to the tunnel by guacd.
+     *
+     * @return
+     *     A new registration for the described tunnel.
+     */
     private TunnelRegistration registration(String uuid, GuacdEndpoint endpoint,
             String guacdConnectionId) {
         return new TunnelRegistration(uuid, "node-1", guacdConnectionId, endpoint,
@@ -89,6 +148,14 @@ public class TunnelRegistrationTest {
                 System.currentTimeMillis(), "record-" + uuid);
     }
 
+    /**
+     * Verifies that, once registered, a tunnel's guacd connection ID resolves
+     * to the guacd instance serving it, which is how a join from another
+     * replica reaches the right guacd.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or the route looked up.
+     */
     @Test
     public void registeredTunnelIsRoutableByGuacdConnectionId() throws Exception {
 
@@ -97,11 +164,25 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that looking up a guacd connection ID that was never
+     * registered returns null rather than failing.
+     *
+     * @throws Exception
+     *     If the route cannot be looked up.
+     */
     @Test
     public void unknownRouteReturnsNull() throws Exception {
         assertNull(store.lookupRoute("$nonexistent"));
     }
 
+    /**
+     * Verifies that registration adds the tunnel to the cluster-wide, per-user
+     * and per-guacd indexes.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void registeredTunnelAppearsInEveryIndex() throws Exception {
 
@@ -113,6 +194,14 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that registration stores the tunnel's details in its hash,
+     * including the owning replica, connection identifier and guacd
+     * endpoint.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void storesTheFullTunnelRecord() throws Exception {
 
@@ -126,6 +215,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that live tunnels are counted separately for each guacd
+     * instance, which is the load figure used to select a guacd.
+     *
+     * @throws Exception
+     *     If a tunnel cannot be registered.
+     */
     @Test
     public void countsLiveTunnelsPerGuacdInstance() throws Exception {
 
@@ -138,6 +234,14 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that a per-guacd index member whose score is outside the stale
+     * window is not counted as load, so a guacd is not avoided because of
+     * tunnels belonging to a dead replica.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void ignoresStaleTunnelsWhenCounting() throws Exception {
 
@@ -151,6 +255,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that unregistering a tunnel removes its route, its index
+     * membership and its contribution to guacd load.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or unregistered.
+     */
     @Test
     public void unregisterRemovesTunnelAndRoute() throws Exception {
 
@@ -164,6 +275,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that unregistering the same tunnel twice neither fails nor
+     * leaves anything behind, since teardown may run more than once.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or unregistered.
+     */
     @Test
     public void unregisterIsSafeToRepeat() throws Exception {
 
@@ -176,6 +294,14 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that a heartbeat moves the tunnel's index scores forward and
+     * keeps its route key from expiring, so a long-lived tunnel is never
+     * mistaken for one left behind by a dead replica.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or the heartbeat fails.
+     */
     @Test
     public void heartbeatRefreshesScoresAndExpiry() throws Exception {
 
@@ -198,6 +324,15 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that a tunnel which first acquires a seat and is then
+     * registered under the same seat token occupies a single member of the
+     * connection index, rather than counting twice against the connection's
+     * limit.
+     *
+     * @throws Exception
+     *     If the seat cannot be acquired or the tunnel registered.
+     */
     @Test
     public void registrationAndSeatShareOneMemberPerConnection() throws Exception {
 
@@ -219,6 +354,14 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that registration stores the history record UUID and a
+     * pointer from that UUID back to the seat token, so a session listed by
+     * record UUID can be addressed by a kill.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void recordUuidIsStoredAndResolvesToTheSeatToken() throws Exception {
 
@@ -235,6 +378,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that a tunnel without a history record UUID is still
+     * registered and routable, and simply has no record pointer.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or the route looked up.
+     */
     @Test
     public void tunnelWithNoRecordUuidIsStillRegistered() throws Exception {
 
@@ -250,6 +400,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that unregistering a tunnel also removes the pointer from its
+     * history record UUID to its seat token.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered or unregistered.
+     */
     @Test
     public void unregisterRemovesTheRecordPointer() throws Exception {
 
@@ -264,6 +421,13 @@ public class TunnelRegistrationTest {
 
     }
 
+    /**
+     * Verifies that a heartbeat for no tunnels does nothing and does not
+     * fail, as happens on a replica with no active connections.
+     *
+     * @throws Exception
+     *     If the heartbeat fails.
+     */
     @Test
     public void heartbeatOfAnEmptyCollectionIsHarmless() throws Exception {
         store.heartbeat(Collections.<TunnelRegistration>emptyList());

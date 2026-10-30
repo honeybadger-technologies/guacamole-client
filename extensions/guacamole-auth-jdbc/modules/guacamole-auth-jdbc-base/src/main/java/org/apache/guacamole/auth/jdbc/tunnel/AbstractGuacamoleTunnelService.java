@@ -183,20 +183,28 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
     private JDBCEnvironment environment;
 
     /**
-     * Selects which guacd instance each connection should be established
-     * against.
+     * The selector which chooses the guacd instance each new connection is
+     * established against, and which routes a join to the guacd instance
+     * already hosting the session being joined. With clustering disabled it
+     * selects from a pool containing only the default guacd.
      */
     @Inject
     private GuacdSelector guacdSelector;
 
     /**
-     * Cluster-wide state shared with every other Guacamole replica.
+     * The cluster store, holding state shared with every other Guacamole
+     * replica: the registrations of all active tunnels, and the channel over
+     * which requests to close a tunnel are delivered. With clustering
+     * disabled this is a no-op store.
      */
     @Inject
     private ClusterStore clusterStore;
 
     /**
-     * Heartbeat keeping this replica's tunnels alive in the cluster indexes.
+     * The heartbeat which periodically refreshes the cluster registrations of
+     * all tunnels owned by this replica. A registration which stops being
+     * refreshed (for example, because this replica died) ages out of the
+     * cluster within the stale window.
      */
     @Inject
     private ClusterHeartbeat clusterHeartbeat;
@@ -232,12 +240,12 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      *     Whether connections which have been designated for use in failover
      *     situations only (hot spares) may be considered.
      *
-     * @return
-     *     The connection that has been acquired on behalf of the given user.
-     *
      * @param seatToken
      *     Opaque identifier for the cluster seats held by this connection.
      *     Must be the same value on the matching acquire and release.
+     *
+     * @return
+     *     The connection that has been acquired on behalf of the given user.
      *
      * @throws GuacamoleException
      *     If access is denied to the given user for any reason.
@@ -261,7 +269,6 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      * @param seatToken
      *     Opaque identifier for the cluster seats held by this connection.
      *     Must be the same value on the matching acquire and release.
-     *
      */
     protected abstract void release(RemoteAuthenticatedUser user,
             ModeledConnection connection, String seatToken);
@@ -302,7 +309,6 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      * @param seatToken
      *     Opaque identifier for the cluster seats held by this connection.
      *     Must be the same value on the matching acquire and release.
-     *
      */
     protected abstract void release(RemoteAuthenticatedUser user,
             ModeledConnectionGroup connectionGroup, String seatToken);
@@ -369,8 +375,8 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      *      the guacd instance already hosting it. If that instance is no longer
      *      known, this fails rather than silently opening a new session.
      *   2. If the connection pins a specific guacd in the database, that pin is
-     *      honored, preserving upstream behavior for deliberately pinned
-     *      connections.
+     *      honored, so that deliberately pinned connections behave exactly as
+     *      they would without clustering.
      *   3. Otherwise the least-loaded instance in the pool is chosen.
      *
      * @param activeConnection
@@ -391,8 +397,8 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
         // Joining an existing guacd connection: route to its owner. Only the
         // cluster knows which guacd that is; with clustering off there is no
         // route table, and falling through selects the single configured guacd
-        // exactly as upstream does -- the join still happens, because the guacd
-        // connection ID travels in the configuration.
+        // exactly as it would without clustering -- the join still happens,
+        // because the guacd connection ID travels in the configuration.
         String joinId = activeConnection.getConnectionID();
         if (joinId != null && clusterStore.isClustered())
             return guacdSelector.selectForJoin(joinId);
@@ -522,6 +528,10 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
             // Every tunnel is published to the cluster, including a share-key
             // join, so every tunnel is withdrawn here. Only seats are primary-
             // only, because a join never acquired one.
+            //
+            // The heartbeat is stopped before the registration is removed, as
+            // a heartbeat running in between would otherwise re-publish the
+            // entry that was just deleted.
             clusterHeartbeat.remove(activeConnection.getClusterSeatToken());
 
             TunnelRegistration registration = activeConnection.getClusterRegistration();
@@ -698,8 +708,11 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
 
             // Publishing is best-effort. A cluster that cannot be reached must
             // not cost the user their connection -- it degrades to a
-            // replica-local view (spec 6.1), losing cross-replica join and
-            // cluster-wide admin visibility for this tunnel only.
+            // replica-local view, losing cross-replica join and cluster-wide
+            // administrative visibility for this tunnel only. (A join to a
+            // guacd that cannot be located, by contrast, fails closed in
+            // selectGuacdEndpoint(), as it would otherwise open a new
+            // session instead of joining the existing one.)
             try {
                 clusterStore.registerTunnel(registration);
                 clusterHeartbeat.add(registration);
@@ -769,7 +782,9 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
 
     /**
      * Closes the tunnel with the given history record UUID, if this replica
-     * owns it.
+     * owns it. This is invoked when any replica asks the cluster to close a
+     * tunnel; every replica receives the request, and only the owner acts on
+     * it.
      *
      * @param recordUuid
      *     The UUID of the history record identifying the tunnel.
@@ -780,6 +795,7 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      */
     public boolean closeLocalTunnel(String recordUuid) {
 
+        // Ignore requests for tunnels owned by other replicas
         ActiveConnectionRecord record = activeTunnels.get(recordUuid);
         if (record == null)
             return false;
@@ -788,6 +804,8 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
         if (tunnel == null || !tunnel.isOpen())
             return false;
 
+        // Closing the tunnel runs its cleanup task, which withdraws it from
+        // the cluster; the requesting replica observes that removal
         try {
             tunnel.close();
             return true;
@@ -802,8 +820,10 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
     }
 
     /**
-     * Subscribes this replica to cluster kill requests. Invoked by Guice once
-     * this service has been constructed and its dependencies injected.
+     * Subscribes this replica to cluster kill requests, so that a tunnel owned
+     * by this replica can be closed by an administrator connected to any
+     * other replica. Invoked by Guice once this service has been constructed
+     * and its dependencies injected.
      */
     @Inject
     public void registerClusterKillHandler() {

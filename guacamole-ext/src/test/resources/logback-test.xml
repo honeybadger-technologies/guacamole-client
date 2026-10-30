@@ -17,6 +17,13 @@
     specific language governing permissions and limitations
     under the License.
 -->
+
+<!--
+    Logging configuration for the guacamole-ext unit tests. Test output is
+    written to the console at INFO, including Testcontainers' own progress
+    messages, so that problems starting the Redis container used by the
+    cluster tests are visible in the build output.
+-->
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder><pattern>%-5level %logger{36} - %msg%n</pattern></encoder>

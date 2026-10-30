@@ -46,23 +46,29 @@ public class RedisAuthenticationFailureTracker implements AuthenticationFailureT
             LoggerFactory.getLogger(RedisAuthenticationFailureTracker.class);
 
     /**
-     * Stale window of the cluster store. Irrelevant to failure counting, which
-     * expires its own keys, but required by the constructor.
+     * The stale window, in milliseconds, passed to the cluster store. It
+     * governs only node liveness, which is irrelevant to failure counting
+     * (failure counts expire on their own), but the store's constructor
+     * requires a value.
      */
     private static final long UNUSED_STALE_WINDOW_MS = 30000L;
 
     /**
-     * The cluster state holding failure counts.
+     * The cluster store in which failure counts are held, shared by every
+     * replica so that each sees the same total for an address.
      */
     private final ClusterStore clusterStore;
 
     /**
-     * The number of failures after which an address is blocked.
+     * The number of failures, across the whole cluster, after which further
+     * authentication attempts from an address are blocked.
      */
     private final int maxAttempts;
 
     /**
-     * The number of seconds an address remains blocked.
+     * The number of seconds an address remains blocked. This is also the
+     * lifetime of the address's failure count in the cluster store, which is
+     * refreshed by each new failure.
      */
     private final int banDuration;
 
@@ -155,6 +161,9 @@ public class RedisAuthenticationFailureTracker implements AuthenticationFailureT
         if (address == null)
             throw new GuacamoleServerException("Source address cannot be determined.");
 
+        // Atomically increment the cluster-wide count on failure, or merely
+        // read it otherwise. Either call returns a negative value if Redis
+        // could not be reached.
         int failures;
         if (failed)
             failures = clusterStore.recordAuthenticationFailure(address, banDuration);
@@ -171,6 +180,7 @@ public class RedisAuthenticationFailureTracker implements AuthenticationFailureT
             return;
         }
 
+        // Log failures, then block if the cluster-wide total is at the limit
         if (failed)
             logger.info("Authentication has failed for address \"{}\" (current "
                     + "total failures across the cluster: {}/{}).", address,

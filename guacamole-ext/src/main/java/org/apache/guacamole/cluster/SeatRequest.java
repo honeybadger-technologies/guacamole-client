@@ -29,18 +29,54 @@ import java.util.List;
  */
 public class SeatRequest {
 
+    /**
+     * The identifier of the tunnel holding the seats. This is the member
+     * added to, and later removed from, every sorted set in the request.
+     */
     private final String tunnelUuid;
+
+    /**
+     * The unmodifiable, ordered list of limit-bearing sorted sets in which a
+     * seat must be held.
+     */
     private final List<SeatKey> keys;
 
+    /**
+     * Creates a new SeatRequest for the given tunnel and ordered list of
+     * limit-bearing sorted sets.
+     *
+     * @param tunnelUuid
+     *     The identifier of the tunnel holding the seats, such as the seat
+     *     token minted at acquire time.
+     *
+     * @param keys
+     *     The limit-bearing sorted sets in which a seat must be held, in the
+     *     order in which their limits are checked. The list is wrapped, not
+     *     copied, and must not be modified afterwards.
+     */
     public SeatRequest(String tunnelUuid, List<SeatKey> keys) {
         this.tunnelUuid = tunnelUuid;
         this.keys = Collections.unmodifiableList(keys);
     }
 
+    /**
+     * Returns the identifier of the tunnel holding the seats.
+     *
+     * @return
+     *     The identifier of the tunnel holding the seats.
+     */
     public String getTunnelUuid() {
         return tunnelUuid;
     }
 
+    /**
+     * Returns the ordered list of limit-bearing sorted sets in which a seat
+     * must be held.
+     *
+     * @return
+     *     An unmodifiable, ordered list of the sorted sets in which a seat
+     *     must be held.
+     */
     public List<SeatKey> getKeys() {
         return keys;
     }

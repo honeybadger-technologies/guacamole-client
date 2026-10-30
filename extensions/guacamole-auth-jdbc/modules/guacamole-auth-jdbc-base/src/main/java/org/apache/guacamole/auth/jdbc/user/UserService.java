@@ -451,10 +451,13 @@ public class UserService extends ModeledDirectoryObjectService<ModeledUser, User
             AuthenticationProvider authenticationProvider, String username,
             Credentials credentials) throws GuacamoleException {
 
+        // A user deleted since the session was created cannot be rebuilt
         UserModel userModel = userMapper.selectOne(username, getCaseSensitivity());
         if (userModel == null)
             return null;
 
+        // Wrap the model as a user acting as itself, exactly as
+        // retrieveAuthenticatedUser() does after a successful password check
         ModeledUser user = getObjectInstance(null, userModel);
         user.setCurrentUser(new ModeledAuthenticatedUser(authenticationProvider,
                 user, credentials));

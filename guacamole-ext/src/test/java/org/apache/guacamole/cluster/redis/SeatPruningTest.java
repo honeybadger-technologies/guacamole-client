@@ -33,8 +33,20 @@ import org.testcontainers.DockerClientFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Tests that the atomic seat acquisition script of
+ * {@link RedisClusterStore} prunes index members left behind by dead
+ * replicas, and that such members never count against a seat limit. Runs
+ * against a real Redis started by Testcontainers, and is skipped when Docker
+ * is unavailable.
+ */
 public class SeatPruningTest {
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
     /**
@@ -49,10 +61,28 @@ public class SeatPruningTest {
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
+    /**
+     * The raw Lettuce client used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private RedisClient client;
+
+    /**
+     * The raw connection used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private StatefulRedisConnection<String, String> connection;
+
+    /**
+     * The store under test, acting as replica "node-1".
+     */
     private RedisClusterStore store;
 
+    /**
+     * Opens a raw connection to the shared Redis container, flushes it so
+     * that no state leaks between tests, and creates a fresh store under
+     * test.
+     */
     @BeforeEach
     public void setUp() {
         client = RedisClient.create(RedisTestSupport.redisUri());
@@ -61,6 +91,10 @@ public class SeatPruningTest {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
     }
 
+    /**
+     * Shuts down the store under test and closes the raw connection and
+     * client, releasing every connection opened by {@link #setUp()}.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
@@ -68,13 +102,22 @@ public class SeatPruningTest {
         client.shutdown();
     }
 
+    /**
+     * Verifies that acquiring a seat physically removes every member of the
+     * seat's sorted set whose score is outside the stale window, so dead
+     * entries do not accumulate in Redis forever.
+     *
+     * @throws Exception
+     *     If the seat cannot be acquired.
+     */
     @Test
     public void acquiringASeatPrunesTombstonesLeftByDeadReplicas() throws Exception {
 
         String key = ClusterKeys.connectionIndex("conn-1");
 
-        // Two tunnels whose replica died without ever releasing them. P1 has no
-        // mechanism that removes these; only the seat script does.
+        // Two tunnels whose replica died without ever releasing them. Nothing
+        // else removes these from the connection index; only the seat script
+        // does.
         long ancient = System.currentTimeMillis() - (STALE_WINDOW_MS * 10);
         connection.sync().zadd(key, (double) ancient, "dead-tunnel-1");
         connection.sync().zadd(key, (double) ancient, "dead-tunnel-2");
@@ -88,6 +131,14 @@ public class SeatPruningTest {
 
     }
 
+    /**
+     * Verifies that stale members are pruned before the seat limit is
+     * checked, so that a connection is never refused because of seats held
+     * by replicas that no longer exist.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void tombstonesDoNotConsumeCapacity() throws Exception {
 

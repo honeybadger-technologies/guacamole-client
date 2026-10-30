@@ -37,14 +37,36 @@ import org.slf4j.LoggerFactory;
  */
 public class ClusterHeartbeat {
 
+    /**
+     * Logger for this class.
+     */
     private static final Logger logger = LoggerFactory.getLogger(ClusterHeartbeat.class);
 
+    /**
+     * The cluster store against which the heartbeat scores of all locally
+     * owned tunnels are refreshed.
+     */
     private final ClusterStore store;
+
+    /**
+     * The number of milliseconds to wait between the end of one heartbeat and
+     * the start of the next.
+     */
     private final long intervalMs;
 
+    /**
+     * All tunnels currently owned by this replica, keyed by tunnel UUID. Only
+     * tunnels in this map are heartbeated; a tunnel removed from it will age
+     * out of the cluster indexes once its last heartbeat becomes stale.
+     */
     private final Map<String, TunnelRegistration> registrations =
             new ConcurrentHashMap<String, TunnelRegistration>();
 
+    /**
+     * Single-threaded executor which runs the periodic heartbeat. Its thread
+     * is a daemon so that a forgotten shutdown can never prevent the JVM from
+     * exiting.
+     */
     private final ScheduledExecutorService executor =
             Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
 
@@ -58,6 +80,10 @@ public class ClusterHeartbeat {
             });
 
     /**
+     * Creates a new ClusterHeartbeat which refreshes the tunnels registered
+     * with it against the given store at the given interval. Heartbeating
+     * does not begin until start() is invoked.
+     *
      * @param store
      *     The cluster store to refresh against.
      *
@@ -69,14 +95,37 @@ public class ClusterHeartbeat {
         this.intervalMs = intervalMs;
     }
 
+    /**
+     * Adds the given tunnel to the set of tunnels heartbeated by this replica.
+     * If a tunnel with the same UUID is already registered, it is replaced.
+     *
+     * @param registration
+     *     The registration of the locally owned tunnel to heartbeat.
+     */
     public void add(TunnelRegistration registration) {
         registrations.put(registration.getTunnelUuid(), registration);
     }
 
+    /**
+     * Removes the tunnel having the given UUID from the set of tunnels
+     * heartbeated by this replica. If no such tunnel is registered, this
+     * function has no effect.
+     *
+     * @param tunnelUuid
+     *     The UUID of the tunnel to stop heartbeating.
+     */
     public void remove(String tunnelUuid) {
         registrations.remove(tunnelUuid);
     }
 
+    /**
+     * Returns a live view of the registrations of all tunnels currently
+     * heartbeated by this replica.
+     *
+     * @return
+     *     A live view of all registrations currently heartbeated by this
+     *     replica.
+     */
     public Collection<TunnelRegistration> getRegistrations() {
         return registrations.values();
     }
@@ -91,6 +140,9 @@ public class ClusterHeartbeat {
 
             @Override
             public void run() {
+
+                // Catch everything, including errors, as any throwable
+                // escaping a scheduled task cancels all future runs
                 try {
                     store.heartbeat(registrations.values());
                 }
@@ -98,11 +150,17 @@ public class ClusterHeartbeat {
                     logger.warn("Cluster heartbeat failed. Tunnels owned by this node "
                             + "may age out of the cluster if this persists.", e);
                 }
+
             }
 
         }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Stops heartbeating immediately, interrupting any heartbeat currently in
+     * progress. Tunnels registered with this heartbeat will subsequently age
+     * out of the cluster indexes unless another heartbeat refreshes them.
+     */
     public void shutdown() {
         executor.shutdownNow();
     }

@@ -31,11 +31,10 @@ import org.apache.guacamole.properties.StringGuacamoleProperty;
  */
 public class ClusterProperties {
 
-    private ClusterProperties() {}
-
     /**
-     * Whether cluster coordination is active. When false, every code path
-     * behaves exactly as unmodified upstream Guacamole.
+     * A property which configures whether cluster coordination is active.
+     * When false, every code path behaves exactly as it does in a
+     * non-clustered Guacamole deployment.
      */
     public static final BooleanGuacamoleProperty CLUSTER_ENABLED =
             new BooleanGuacamoleProperty() {
@@ -48,8 +47,9 @@ public class ClusterProperties {
     };
 
     /**
-     * Lettuce URI of the Redis server, for example "redis://host:6379" or
-     * "rediss://host:6379" for TLS.
+     * A property which specifies the Lettuce URI of the Redis server holding
+     * cluster state, for example "redis://host:6379" or "rediss://host:6379"
+     * for TLS.
      */
     public static final StringGuacamoleProperty CLUSTER_REDIS_URI =
             new StringGuacamoleProperty() {
@@ -62,13 +62,13 @@ public class ClusterProperties {
     };
 
     /**
-     * Whether cluster state may be held in a Redis which is unauthenticated,
-     * unencrypted, or both. Defaults to false.
+     * A property which configures whether cluster state may be held in a
+     * Redis which is unauthenticated, unencrypted, or both. Defaults to false.
      *
-     * Since P4b the keyspace holds session identity, so an open Redis exposes
-     * who is logged in and from where to anything that can reach the port.
-     * Setting this to true is appropriate for a private test namespace and
-     * nowhere else.
+     * The keyspace holds session identity, so an open Redis exposes who is
+     * logged in and from where to anything that can reach the port. Setting
+     * this to true is appropriate for a private test environment and nowhere
+     * else.
      */
     public static final BooleanGuacamoleProperty CLUSTER_ALLOW_INSECURE_REDIS =
             new BooleanGuacamoleProperty() {
@@ -81,8 +81,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Path to a PEM certificate authority the Redis server's certificate is
-     * signed by.
+     * A property which specifies the path to a PEM certificate authority the
+     * Redis server's certificate is signed by.
      *
      * Needed only for a privately issued certificate. Trust is applied to the
      * Redis client alone, never to the JVM's default truststore, which also
@@ -99,7 +99,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Whether the Prometheus metrics endpoint is served. Defaults to false.
+     * A property which configures whether the Prometheus metrics endpoint is
+     * served. Defaults to false.
      */
     public static final BooleanGuacamoleProperty CLUSTER_METRICS_ENABLED =
             new BooleanGuacamoleProperty() {
@@ -112,12 +113,13 @@ public class ClusterProperties {
     };
 
     /**
-     * Bearer token required by the metrics endpoint.
+     * A property which specifies the bearer token required by the metrics
+     * endpoint.
      *
      * The endpoint cannot require a Guacamole session, because a scraper does
-     * not have one, and it cannot be open, because the Ingress routes every
-     * path to this application. Enabling metrics without a token is refused at
-     * startup.
+     * not have one, and it cannot be open, because a reverse proxy in front of
+     * Guacamole will typically expose every path of this application.
+     * Enabling metrics without a token is refused at startup.
      */
     public static final StringGuacamoleProperty CLUSTER_METRICS_TOKEN =
             new StringGuacamoleProperty() {
@@ -130,8 +132,9 @@ public class ClusterProperties {
     };
 
     /**
-     * Identity of this replica. Defaults to the HOSTNAME environment variable
-     * plus a random suffix.
+     * A property which specifies the identity of this replica within the
+     * cluster. Defaults to the HOSTNAME environment variable plus a random
+     * suffix.
      */
     public static final StringGuacamoleProperty CLUSTER_NODE_ID =
             new StringGuacamoleProperty() {
@@ -144,7 +147,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Milliseconds between heartbeats.
+     * A property which specifies the number of milliseconds between
+     * heartbeats refreshing the tunnels owned by this replica.
      */
     public static final LongGuacamoleProperty CLUSTER_HEARTBEAT_INTERVAL =
             new LongGuacamoleProperty() {
@@ -157,7 +161,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Milliseconds after which an unrefreshed cluster entry is considered dead.
+     * A property which specifies the number of milliseconds after which an
+     * unrefreshed cluster entry is considered dead.
      */
     public static final LongGuacamoleProperty CLUSTER_STALE_WINDOW =
             new LongGuacamoleProperty() {
@@ -170,7 +175,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Comma-separated list of "host" or "host:port" guacd instances.
+     * A property which specifies a comma-separated list of "host" or
+     * "host:port" guacd instances to which connections may be distributed.
      */
     public static final StringGuacamoleProperty GUACD_CLUSTER_HOSTS =
             new StringGuacamoleProperty() {
@@ -183,8 +189,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Hostname resolving to every available guacd instance, such as a
-     * Kubernetes headless Service.
+     * A property which specifies a hostname resolving to every available
+     * guacd instance, such as a Kubernetes headless Service.
      */
     public static final StringGuacamoleProperty GUACD_CLUSTER_DNS =
             new StringGuacamoleProperty() {
@@ -197,7 +203,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Port on which pooled guacd instances listen.
+     * A property which specifies the port on which pooled guacd instances
+     * listen.
      */
     public static final IntegerGuacamoleProperty GUACD_CLUSTER_PORT =
             new IntegerGuacamoleProperty() {
@@ -210,7 +217,8 @@ public class ClusterProperties {
     };
 
     /**
-     * Milliseconds a guacd instance is skipped after a failed connection.
+     * A property which specifies the number of milliseconds a guacd instance
+     * is skipped after a failed connection.
      */
     public static final LongGuacamoleProperty GUACD_CIRCUIT_BREAK_DURATION =
             new LongGuacamoleProperty() {
@@ -221,7 +229,6 @@ public class ClusterProperties {
         }
 
     };
-
 
     /**
      * Returns whether cluster coordination is enabled.

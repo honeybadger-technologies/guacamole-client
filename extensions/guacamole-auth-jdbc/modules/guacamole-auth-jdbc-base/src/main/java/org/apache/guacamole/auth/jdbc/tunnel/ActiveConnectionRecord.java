@@ -86,26 +86,62 @@ public class ActiveConnectionRecord extends ModeledConnectionRecord {
      */
     private TunnelRegistration clusterRegistration;
 
+    /**
+     * The token identifying the cluster seats held by this connection. It is
+     * minted before the seats are acquired, which is necessarily before this
+     * record's own UUID exists -- that is derived from the database record ID
+     * and is null until connection history is written. The same token also
+     * keys this connection's tunnel registration, so that other replicas can
+     * determine whether the session is still live.
+     */
+    private String clusterSeatToken;
+
+    /**
+     * Returns the registration which was published to the cluster for this
+     * connection, describing it to other replicas.
+     *
+     * @return
+     *     The cluster registration published for this connection, or null if
+     *     this connection was never published (clustering is disabled, or
+     *     the connection failed before a socket was established).
+     */
     public TunnelRegistration getClusterRegistration() {
         return clusterRegistration;
     }
 
+    /**
+     * Sets the registration which was published to the cluster for this
+     * connection, so that it can be refreshed while the connection is active
+     * and removed when the connection ends.
+     *
+     * @param clusterRegistration
+     *     The cluster registration published for this connection, or null if
+     *     this connection has not been published.
+     */
     public void setClusterRegistration(TunnelRegistration clusterRegistration) {
         this.clusterRegistration = clusterRegistration;
     }
 
     /**
-     * Identifies this connection's cluster seats. Minted before the seats are
-     * acquired, which is necessarily before this record's own UUID exists --
-     * that is derived from the database record ID and is null until connection
-     * history is written.
+     * Returns the token identifying the cluster seats held by this
+     * connection.
+     *
+     * @return
+     *     The token identifying the cluster seats held by this connection, or
+     *     null if no token has been minted yet.
      */
-    private String clusterSeatToken;
-
     public String getClusterSeatToken() {
         return clusterSeatToken;
     }
 
+    /**
+     * Sets the token identifying the cluster seats held by this connection.
+     * This must be the same token that was used to acquire those seats, as
+     * it is the token used to release them.
+     *
+     * @param clusterSeatToken
+     *     The token identifying the cluster seats held by this connection.
+     */
     public void setClusterSeatToken(String clusterSeatToken) {
         this.clusterSeatToken = clusterSeatToken;
     }
@@ -333,6 +369,8 @@ public class ActiveConnectionRecord extends ModeledConnectionRecord {
             ModeledConnection connection,
             String guacdConnectionId,
             ModeledSharingProfile sharingProfile) {
+        // There is no local record of the session being joined; only the guacd
+        // connection ID is needed to join it
         this(connectionMap, user, null, connection, sharingProfile);
         this.connectionID = guacdConnectionId;
     }

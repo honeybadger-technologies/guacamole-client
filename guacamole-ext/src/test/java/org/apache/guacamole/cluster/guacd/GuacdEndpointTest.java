@@ -24,20 +24,39 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Unit tests for GuacdEndpoint, the value object identifying one guacd
+ * instance. These tests verify the string form stored in Redis route entries
+ * and load index keys, and the conversion to the standard
+ * GuacamoleProxyConfiguration used to open a connection.
+ */
 public class GuacdEndpointTest {
 
+    /**
+     * Verifies that an endpoint converted to its key form with toKey() and
+     * parsed back with fromKey() is equal to the original endpoint.
+     */
     @Test
     public void roundTripsThroughKeyForm() {
         GuacdEndpoint endpoint = new GuacdEndpoint("guacd-0", 4822, EncryptionMethod.NONE);
         assertEquals(endpoint, GuacdEndpoint.fromKey(endpoint.toKey()));
     }
 
+    /**
+     * Verifies that an IPv6 literal hostname, which itself contains ":",
+     * survives the key round trip intact. This is why the key form uses "|" as
+     * its separator rather than ":".
+     */
     @Test
     public void roundTripsIpv6Addresses() {
         GuacdEndpoint endpoint = new GuacdEndpoint("fd00::1", 4822, EncryptionMethod.SSL);
         assertEquals(endpoint, GuacdEndpoint.fromKey(endpoint.toKey()));
     }
 
+    /**
+     * Verifies that the hostname, port and encryption method of an endpoint are
+     * carried over unchanged into the GuacamoleProxyConfiguration it produces.
+     */
     @Test
     public void convertsToProxyConfiguration() {
         GuacdEndpoint endpoint = new GuacdEndpoint("guacd-1", 4823, EncryptionMethod.SSL);

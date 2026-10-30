@@ -36,10 +36,23 @@ import org.testcontainers.DockerClientFactory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests the cluster-wide tunnel listing of {@link RedisClusterStore}, which
+ * backs the administrative active-connection view. Runs against a real Redis
+ * started by Testcontainers, and is skipped when Docker is unavailable.
+ */
 public class RemoteListingTest {
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
+    /**
+     * The guacd instance every registered tunnel in these tests is routed to.
+     */
     private static final GuacdEndpoint GUACD_A =
             new GuacdEndpoint("guacd-a", 4822, EncryptionMethod.NONE);
 
@@ -54,10 +67,28 @@ public class RemoteListingTest {
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
+    /**
+     * The raw Lettuce client used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private RedisClient client;
+
+    /**
+     * The raw connection used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private StatefulRedisConnection<String, String> connection;
+
+    /**
+     * The store under test, acting as replica "node-1".
+     */
     private RedisClusterStore store;
 
+    /**
+     * Opens a raw connection to the shared Redis container, flushes it so
+     * that no state leaks between tests, and creates a fresh store under
+     * test.
+     */
     @BeforeEach
     public void setUp() {
         client = RedisClient.create(RedisTestSupport.redisUri());
@@ -66,6 +97,10 @@ public class RemoteListingTest {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
     }
 
+    /**
+     * Shuts down the store under test and closes the raw connection and
+     * client, releasing every connection opened by {@link #setUp()}.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
@@ -73,12 +108,36 @@ public class RemoteListingTest {
         client.shutdown();
     }
 
+    /**
+     * Returns a registration for a tunnel owned by replica "node-2" on
+     * connection "conn-1", so that every listed entry is visibly one this
+     * replica did not create itself.
+     *
+     * @param seat
+     *     The seat token (tunnel UUID) of the tunnel.
+     *
+     * @param user
+     *     The username of the user owning the tunnel.
+     *
+     * @param recordUuid
+     *     The UUID of the connection history record for the tunnel.
+     *
+     * @return
+     *     A new registration for the described tunnel.
+     */
     private TunnelRegistration registration(String seat, String user, String recordUuid) {
         return new TunnelRegistration(seat, "node-2", "$" + seat, GUACD_A,
                 "conn-1", null, null, user, "10.0.0.5",
                 System.currentTimeMillis(), recordUuid);
     }
 
+    /**
+     * Verifies that every registered, unexpired tunnel is listed, regardless
+     * of which user owns it.
+     *
+     * @throws Exception
+     *     If the tunnels cannot be registered.
+     */
     @Test
     public void listsEveryLiveTunnel() throws Exception {
 
@@ -90,6 +149,14 @@ public class RemoteListingTest {
 
     }
 
+    /**
+     * Verifies that a listed tunnel is rebuilt from Redis with every field
+     * the administrative view displays or acts upon, including the owning
+     * replica and the history record UUID used to address a kill.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void listedEntriesCarryTheFieldsTheAdminViewNeeds() throws Exception {
 
@@ -105,6 +172,14 @@ public class RemoteListingTest {
 
     }
 
+    /**
+     * Verifies that an index member whose score is outside the stale window,
+     * and whose tunnel hash no longer exists, is not listed. Such members are
+     * left behind when a replica dies without unregistering its tunnels.
+     *
+     * @throws Exception
+     *     If the tunnel cannot be registered.
+     */
     @Test
     public void omitsStaleTunnelsLeftByDeadReplicas() throws Exception {
 
@@ -121,6 +196,13 @@ public class RemoteListingTest {
 
     }
 
+    /**
+     * Verifies that listing an empty cluster returns an empty collection
+     * rather than null or an error.
+     *
+     * @throws Exception
+     *     If the listing fails.
+     */
     @Test
     public void returnsEmptyRatherThanFailingWhenThereIsNothing() throws Exception {
         assertTrue(store.listTunnels().isEmpty());

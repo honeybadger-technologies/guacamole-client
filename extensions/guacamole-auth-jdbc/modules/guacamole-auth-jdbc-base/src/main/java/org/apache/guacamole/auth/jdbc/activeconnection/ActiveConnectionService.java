@@ -70,32 +70,39 @@ public class ActiveConnectionService
     private Provider<TrackedActiveConnection> trackedActiveConnectionProvider;
 
     /**
-     * Cluster-wide view of active tunnels. Empty when clustering is disabled,
-     * in which case this service behaves exactly as upstream.
+     * The cluster store, providing a cluster-wide view of active tunnels and
+     * the means of asking another replica to close one. When clustering is
+     * disabled this store lists no tunnels, in which case this service
+     * behaves exactly as it would without clustering.
      */
     @Inject
     private ClusterStore clusterStore;
 
     /**
-     * Used to load the connection behind a session owned by another replica.
-     * The database is shared by every replica, so the connection is available
-     * locally even when the session is not.
+     * Service for loading the connection behind a session owned by another
+     * replica. The database is shared by every replica, so the connection is
+     * available locally even when the session is not.
      */
     @Inject
     private ConnectionService connectionService;
 
     /**
-     * Milliseconds to wait for another replica to honour a kill request.
+     * The number of milliseconds to wait for another replica to honour a
+     * request to close one of its sessions before reporting failure.
      */
     private static final long KILL_TIMEOUT_MS = 2000L;
 
     /**
-     * Milliseconds between checks for the cluster entry disappearing.
+     * The number of milliseconds between checks of whether a session that
+     * another replica was asked to close has been removed from the cluster.
      */
     private static final long KILL_POLL_INTERVAL_MS = 100L;
 
     /**
-     * Builds an administrative view of a session owned by another replica.
+     * Builds an administrative view of a session owned by another replica,
+     * populated from the registration that replica published to the cluster.
+     * The returned object has no tunnel and cannot be joined; it exists so
+     * that the session can be listed and closed from any replica.
      *
      * @param user
      *     The user requesting the listing.
@@ -104,7 +111,8 @@ public class ActiveConnectionService
      *     The remote tunnel, as published to the cluster.
      *
      * @param hasPrivilegedAccess
-     *     Whether sensitive fields should be populated.
+     *     Whether sensitive fields (the username and remote host of the user
+     *     who owns the session) should be populated.
      *
      * @return
      *     A tracked connection describing the remote session, with no tunnel.
@@ -112,6 +120,8 @@ public class ActiveConnectionService
     private TrackedActiveConnection remoteActiveConnection(ModeledAuthenticatedUser user,
             TunnelRegistration registration, boolean hasPrivilegedAccess) {
 
+        // Initialise without a local record, then populate every field from
+        // the cluster registration
         TrackedActiveConnection activeConnection = trackedActiveConnectionProvider.get();
         activeConnection.init(user, null, false, false);
 
@@ -134,9 +144,9 @@ public class ActiveConnectionService
         }
         activeConnection.setStartDate(new Date(registration.getStartTime()));
 
-        // A session on another replica cannot be joined from here -- that needs
-        // the share-key work in P3b -- so it is never marked connectable, and
-        // its tunnel stays null
+        // A session on another replica cannot be joined from this listing, as
+        // joining requires that replica's live tunnel, so it is never marked
+        // connectable and its tunnel stays null
         activeConnection.setTunnel(null);
 
         if (hasPrivilegedAccess) {
@@ -206,13 +216,18 @@ public class ActiveConnectionService
 
         for (TunnelRegistration registration : clusterStore.listTunnels()) {
 
+            // Skip registrations without an identifier, and sessions owned by
+            // this replica, which were already added above
             String recordUuid = registration.getRecordUuid();
             if (recordUuid == null || localIdentifiers.contains(recordUuid))
                 continue;
 
+            // Skip sessions which were not requested
             if (!identifierSet.contains(recordUuid))
                 continue;
 
+            // As with local sessions, only privileged users and the owner of
+            // a session may see it
             boolean hasPrivilegedAccess =
                     isPrivileged || username.equals(registration.getUsername());
 
@@ -253,6 +268,8 @@ public class ActiveConnectionService
 
             clusterStore.requestKill(identifier);
 
+            // Poll until the owning replica removes the tunnel's cluster entry,
+            // failing if it has not done so within the timeout
             long deadline = System.currentTimeMillis() + KILL_TIMEOUT_MS;
             while (System.currentTimeMillis() < deadline) {
 

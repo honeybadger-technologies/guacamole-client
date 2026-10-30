@@ -68,14 +68,10 @@
                 <artifactId>maven-javadoc-plugin</artifactId>
             </plugin>
 
-        
-            <!--
-                Docker Engine 29 rejects API versions below its advertised
-                MinAPIVersion (1.40), while the docker-java client bundled with
-                Testcontainers negotiates 1.32 by default and receives HTTP 400.
-                Pinning the API version here keeps Testcontainers working
-                against both current and older engines.
-            -->
+            <!-- Pin the Docker API version used by Testcontainers. Docker
+                 Engine 29 and later reject API versions below 1.40, while the
+                 Docker client bundled with Testcontainers otherwise requests
+                 1.32 and fails. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
@@ -85,7 +81,8 @@
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
-</plugins>
+
+        </plugins>
     </build>
 
     <dependencies>
@@ -130,26 +127,25 @@
             <artifactId>ipaddress</artifactId>
         </dependency>
 
-    
-        <!--
-            Cluster coordination. These classes live here rather than in a
-            module of their own because both the web application and every
-            extension need them, and a type that crosses that boundary must be
-            loaded from exactly one place: extensions take guacamole-ext as
-            "provided" and resolve it from the web application.
-        -->
+        <!-- Lettuce Redis client, used by the cluster coordination classes.
+             These classes live in guacamole-ext because both the web
+             application and every extension use them, and they must be loaded
+             from exactly one classloader, that of the web application, with
+             extensions depending on guacamole-ext as "provided". -->
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
         </dependency>
 
+        <!-- SLF4J logging API for the cluster coordination classes, provided
+             by the web application at runtime -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <scope>provided</scope>
         </dependency>
 
-        <!-- JUnit 5 and Testcontainers (Redis-backed cluster tests) -->
+        <!-- JUnit v5 (cluster coordination tests) -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
@@ -162,23 +158,24 @@
             <scope>test</scope>
         </dependency>
 
-        <!--
-            This module's own tests are JUnit 4. Without the vintage engine,
-            adding Jupiter silently stops running them: surefire picks the
-            JUnit 5 platform and finds no Jupiter tests in those classes.
-        -->
+        <!-- JUnit v5 vintage engine (keeps the existing JUnit v4 tests of
+             this module running once JUnit v5 is present, as Surefire would
+             otherwise run only JUnit v5 tests) -->
         <dependency>
             <groupId>org.junit.vintage</groupId>
             <artifactId>junit-vintage-engine</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <!-- Logback (SLF4J logging implementation for tests) -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <!-- Testcontainers (cluster coordination tests against a real Redis
+             server, skipped if Docker is not available) -->
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
@@ -188,6 +185,7 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
-</dependencies>
+
+    </dependencies>
 
 </project>

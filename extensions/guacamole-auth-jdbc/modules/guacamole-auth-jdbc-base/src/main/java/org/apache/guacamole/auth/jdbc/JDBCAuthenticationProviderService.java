@@ -94,6 +94,8 @@ public class JDBCAuthenticationProviderService implements AuthenticationProvider
     @Transactional
     public AuthenticatedUser rehydrate(AuthenticationProvider authenticationProvider,
             String username, Credentials skeleton) throws GuacamoleException {
+        // The user is rebuilt purely from the database, as no credentials
+        // other than the username are available on this replica
         return userService.retrieveRehydratedUser(authenticationProvider, username,
                 skeleton);
     }

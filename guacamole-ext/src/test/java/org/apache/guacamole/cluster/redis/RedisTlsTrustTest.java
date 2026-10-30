@@ -35,10 +35,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * Trust is scoped to this client rather than installed into the JVM's default
  * truststore: replacing that store would also govern every outbound HTTPS call
- * the deployment makes, SAML identity provider metadata included.
+ * the deployment makes, SAML identity provider metadata included. These tests
+ * only construct stores and never connect, so they need no Docker.
  */
 public class RedisTlsTrustTest {
 
+    /**
+     * Verifies that configuring a certificate authority file which does not
+     * exist fails construction with an error naming the path.
+     */
     @Test
     public void aMissingCertificateIsRefusedAtConstruction() {
 
@@ -52,6 +57,15 @@ public class RedisTlsTrustTest {
 
     }
 
+    /**
+     * Verifies that a readable certificate authority file is accepted at
+     * construction. The store only checks that the file is readable at this
+     * point; the certificate's contents are not parsed until a connection is
+     * attempted, which is why a header-only file suffices.
+     *
+     * @throws IOException
+     *     If the temporary certificate file cannot be created or written.
+     */
     @Test
     public void anExistingCertificateIsAccepted() throws IOException {
 
@@ -67,6 +81,10 @@ public class RedisTlsTrustTest {
 
     }
 
+    /**
+     * Verifies that passing no certificate authority constructs a store
+     * which uses the JVM's default trust.
+     */
     @Test
     public void noCertificateLeavesTheDefaultTrustInPlace() {
 

@@ -49,7 +49,8 @@ public abstract class InjectedAuthenticationProvider
 
     /**
      * The injector this provider was built from, retained so that the cluster
-     * resources it holds can be released on undeploy.
+     * resources it holds (the cluster heartbeat and the connection to the
+     * cluster store) can be released when this provider is shut down.
      */
     private final Injector injector;
 
@@ -90,6 +91,8 @@ public abstract class InjectedAuthenticationProvider
     @Override
     public AuthenticatedUser rehydrate(String username, Credentials skeleton)
             throws GuacamoleException {
+        // Delegate to the service, which decides whether this provider
+        // supports rebuilding a session authenticated on another replica
         return authProviderService.rehydrate(this, username, skeleton);
     }
 

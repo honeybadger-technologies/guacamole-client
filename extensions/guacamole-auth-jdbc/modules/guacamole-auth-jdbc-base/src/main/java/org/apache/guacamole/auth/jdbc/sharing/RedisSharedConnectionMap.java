@@ -40,12 +40,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * SharedConnectionMap which publishes every share key to the cluster, so that
- * a key issued on one replica can be redeemed on any other.
+ * SharedConnectionMap which publishes every share key to the cluster store,
+ * so that a key issued on one replica can be redeemed on any other. This
+ * implementation is bound in place of HashSharedConnectionMap when cluster
+ * coordination is enabled.
  *
  * Keys issued locally are also kept in memory: a local definition owns live
  * tunnel state, registering tunnels and invalidating them on revocation, which
- * cluster state cannot hold.
+ * cluster state cannot hold. A key issued by another replica is instead
+ * resolved from the cluster store and rebuilt from the shared database each
+ * time it is redeemed.
  */
 @Singleton
 public class RedisSharedConnectionMap implements SharedConnectionMap {
@@ -57,51 +61,64 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
             LoggerFactory.getLogger(RedisSharedConnectionMap.class);
 
     /**
-     * The cluster state shared by every replica.
+     * The cluster store shared by every replica, in which share keys are
+     * published, looked up, and revoked.
      */
     @Inject
     private ClusterStore clusterStore;
 
     /**
-     * Mapper for reading the connection behind a share key.
+     * Mapper for reading the connection behind a share key which was issued
+     * by another replica.
      */
     @Inject
     private ConnectionMapper connectionMapper;
 
     /**
-     * Provider for wrapping a connection model.
+     * Provider for ModeledConnection objects, used to wrap the connection
+     * model read for a share key issued by another replica.
      */
     @Inject
     private Provider<ModeledConnection> connectionProvider;
 
     /**
-     * Mapper for reading the sharing profile behind a share key.
+     * Mapper for reading the sharing profile behind a share key which was
+     * issued by another replica.
      */
     @Inject
     private SharingProfileMapper sharingProfileMapper;
 
     /**
-     * Provider for wrapping a sharing profile model.
+     * Provider for ModeledSharingProfile objects, used to wrap the sharing
+     * profile model read for a share key issued by another replica.
      */
     @Inject
     private Provider<ModeledSharingProfile> sharingProfileProvider;
 
     /**
-     * The environment of the Guacamole server.
+     * The environment of the Guacamole server, used to determine whether
+     * identifiers are compared case-sensitively when querying the database.
      */
     @Inject
     private JDBCEnvironment environment;
 
     /**
-     * Definitions issued by this replica.
+     * The definitions of all share keys issued by this replica. These are
+     * retained in memory because they own the tunnels joined through them,
+     * and must close those tunnels when the key is revoked.
      */
     private final HashSharedConnectionMap local = new HashSharedConnectionMap();
 
     @Override
     public void add(SharedConnectionDefinition definition) {
 
+        // Keep the live definition locally, so tunnels joined on this replica
+        // are registered against it
         local.add(definition);
 
+        // Publish just enough for another replica to rebuild the definition:
+        // the owning session's seat token (to check it is still live), the
+        // guacd connection to join, and the database identifiers involved
         clusterStore.putShareKey(definition.getShareKey(), new SharedConnectionEntry(
                 definition.getActiveConnection() != null
                         ? definition.getActiveConnection().getClusterSeatToken() : null,
@@ -121,6 +138,7 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
         if (definition != null)
             return definition;
 
+        // Otherwise the key may have been issued by another replica
         SharedConnectionEntry entry = clusterStore.getShareKey(key);
         if (entry == null)
             return null;
@@ -140,15 +158,20 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
     @Override
     public SharedConnectionDefinition remove(String key) {
 
+        // Remove the key cluster-wide, then notify every other replica so that
+        // any tunnel joined there through this key is closed as well
         clusterStore.removeShareKey(key);
         clusterStore.publishShareRevocation(key);
+
+        // Closes any tunnels joined on this replica
         return local.remove(key);
 
     }
 
     /**
-     * Subscribes this replica to revocations issued elsewhere. Invoked by Guice
-     * once this map has been constructed.
+     * Subscribes this replica to share key revocations issued by any replica,
+     * so that tunnels joined here through a revoked key are closed. Invoked
+     * by Guice once this map has been constructed and its fields injected.
      */
     @Inject
     public void registerRevocationHandler() {
@@ -180,7 +203,8 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
     private SharedConnectionDefinition buildRemoteDefinition(String key,
             SharedConnectionEntry entry) {
 
-        // Both live in the database, which every replica shares
+        // The connection and sharing profile both live in the database, which
+        // every replica shares
         Collection<ConnectionModel> models = connectionMapper.select(
                 Collections.singleton(entry.getConnectionIdentifier()),
                 environment.getCaseSensitivity());
@@ -228,6 +252,8 @@ public class RedisSharedConnectionMap implements SharedConnectionMap {
 
         }
 
+        // The remote definition joins the guacd connection named in the
+        // entry, rather than an active connection held by this replica
         return new SharedConnectionDefinition(connection,
                 entry.getGuacdConnectionId(), entry.getSharedBy(),
                 sharingProfile, key);

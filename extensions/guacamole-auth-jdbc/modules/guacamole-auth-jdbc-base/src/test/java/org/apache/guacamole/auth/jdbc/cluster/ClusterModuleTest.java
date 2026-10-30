@@ -39,6 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Test which verifies the configuration handling of ClusterModule: that
+ * clustering is off unless explicitly enabled, and that the bindings produced
+ * while it is off are the no-op implementations which make an unclustered
+ * deployment behave like unmodified Guacamole. The module is driven by an
+ * in-memory Environment, so no guacamole.properties file, Redis server or
+ * guacd is required.
+ */
 public class ClusterModuleTest {
 
     /**
@@ -48,8 +56,19 @@ public class ClusterModuleTest {
      */
     private static class MapEnvironment implements Environment {
 
+        /**
+         * The property values exposed by this environment, keyed by property
+         * name. Properties absent from this map are treated as unset.
+         */
         private final Map<String, String> properties;
 
+        /**
+         * Creates a new MapEnvironment which exposes the given property
+         * values.
+         *
+         * @param properties
+         *     The property values to expose, keyed by property name.
+         */
         MapEnvironment(Map<String, String> properties) {
             this.properties = properties;
         }
@@ -100,12 +119,29 @@ public class ClusterModuleTest {
 
     }
 
+    /**
+     * Verifies that clustering is disabled when no cluster properties are
+     * set, so that upgrading an existing deployment never enables cluster
+     * coordination implicitly.
+     *
+     * @throws Exception
+     *     If the environment cannot be read. Not expected.
+     */
     @Test
     public void clusteringIsDisabledByDefault() throws Exception {
         Environment environment = new MapEnvironment(new HashMap<String, String>());
         assertFalse(ClusterModule.isEnabled(environment));
     }
 
+    /**
+     * Verifies that, with clustering disabled, the module binds a
+     * NoOpClusterStore and still binds a usable GuacdSelector. Consumers
+     * inject both unconditionally, so a missing binding here would break
+     * every unclustered deployment at startup.
+     *
+     * @throws Exception
+     *     If the injector cannot be created. Not expected.
+     */
     @Test
     public void bindsTheNoOpStoreWhenDisabled() throws Exception {
 
@@ -117,6 +153,14 @@ public class ClusterModuleTest {
 
     }
 
+    /**
+     * Verifies that setting the cluster-enabled property to true enables
+     * clustering. Only the enablement check is exercised; the injector is
+     * not created, as doing so would attempt to connect to Redis.
+     *
+     * @throws Exception
+     *     If the environment cannot be read. Not expected.
+     */
     @Test
     public void enablesClusteringWhenConfigured() throws Exception {
 

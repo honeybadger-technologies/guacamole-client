@@ -50,6 +50,7 @@
             <artifactId>guacamole-auth-jdbc-base</artifactId>
             <version>${revision}</version>
         </dependency>
-</dependencies>
+
+    </dependencies>
 
 </project>

@@ -28,6 +28,13 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Verifies the test harness itself: that the shared Redis container started
+ * by {@link RedisTestSupport} is running and reachable. If this test fails,
+ * every other Redis-backed test failure should be read as a harness problem
+ * rather than a defect in the cluster store. Skipped when Docker is
+ * unavailable.
+ */
 public class RedisHarnessTest {
 
     /**
@@ -42,7 +49,10 @@ public class RedisHarnessTest {
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
-
+    /**
+     * Verifies that a plain Lettuce client can connect to the shared
+     * container and receive "PONG" in reply to PING.
+     */
     @Test
     public void redisContainerRespondsToPing() {
         RedisClient client = RedisClient.create(RedisTestSupport.redisUri());

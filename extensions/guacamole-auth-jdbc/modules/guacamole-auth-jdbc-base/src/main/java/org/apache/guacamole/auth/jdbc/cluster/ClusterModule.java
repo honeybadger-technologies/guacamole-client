@@ -40,32 +40,83 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Guice bindings for cluster coordination. When clustering is disabled, a
- * no-op store and a single-endpoint pool are bound, so every consumer can
- * depend on these types unconditionally.
+ * Guice module which binds the services used for cluster coordination: the
+ * shared ClusterStore, the ClusterHeartbeat which keeps this node registered
+ * in that store, the pool of guacd endpoints available to this node, and the
+ * GuacdSelector which chooses among them. When clustering is disabled, a
+ * no-op store and a pool containing only the default guacd are bound instead,
+ * so that every consumer can depend on these types unconditionally and behaves
+ * exactly as unmodified Guacamole would.
  */
 public class ClusterModule extends AbstractModule {
 
+    /**
+     * Logger for this class.
+     */
     private static final Logger logger = LoggerFactory.getLogger(ClusterModule.class);
 
+    /**
+     * The interval, in milliseconds, at which this node refreshes its
+     * registration in the cluster store, if not overridden by
+     * configuration.
+     */
     private static final long DEFAULT_HEARTBEAT_INTERVAL = 10000L;
+
+    /**
+     * The amount of time, in milliseconds, after which a node which has not
+     * refreshed its registration is considered dead by the rest of the
+     * cluster, if not overridden by configuration.
+     */
     private static final long DEFAULT_STALE_WINDOW = 30000L;
+
+    /**
+     * The amount of time, in milliseconds, for which a guacd endpoint that
+     * failed to accept a connection is skipped by the GuacdSelector, if not
+     * overridden by configuration.
+     */
     private static final long DEFAULT_CIRCUIT_BREAK = 15000L;
+
+    /**
+     * The port used for guacd endpoints resolved from DNS, and for entries in
+     * the guacd host list which do not specify a port explicitly, if not
+     * overridden by configuration. This is the standard guacd port.
+     */
     private static final int DEFAULT_GUACD_PORT = 4822;
+
+    /**
+     * The amount of time, in milliseconds, for which the result of resolving
+     * the guacd DNS name is cached before it is resolved again.
+     */
     private static final long DNS_CACHE_MS = 5000L;
 
+    /**
+     * The Guacamole server environment from which all cluster configuration
+     * properties are read.
+     */
     private final Environment environment;
 
+    /**
+     * Creates a new ClusterModule which reads its configuration from the
+     * given environment.
+     *
+     * @param environment
+     *     The Guacamole server environment from which all cluster
+     *     configuration properties should be read.
+     */
     public ClusterModule(Environment environment) {
         this.environment = environment;
     }
 
     /**
+     * Returns whether cluster coordination has been enabled within the given
+     * environment. This is a convenience wrapper around
+     * {@link ClusterProperties#isEnabled(Environment)}.
+     *
      * @param environment
-     *     The Guacamole server environment.
+     *     The Guacamole server environment to read the property from.
      *
      * @return
-     *     true if cluster coordination is enabled.
+     *     true if cluster coordination is enabled, false otherwise.
      *
      * @throws GuacamoleException
      *     If the property cannot be read.
@@ -74,12 +125,28 @@ public class ClusterModule extends AbstractModule {
         return ClusterProperties.isEnabled(environment);
     }
 
+    /**
+     * Returns the identifier which this node should use when registering
+     * itself in the cluster store. An explicitly configured identifier is
+     * used as-is. Otherwise, an identifier is generated from the HOSTNAME
+     * environment variable (or "guacamole" if unset) plus a random suffix, so
+     * that two nodes sharing a hostname, or a node restarted under the same
+     * hostname, never collide with each other's registration.
+     *
+     * @return
+     *     The identifier this node should use within the cluster.
+     *
+     * @throws GuacamoleException
+     *     If the configured node identifier property cannot be read.
+     */
     private String resolveNodeId() throws GuacamoleException {
 
+        // An explicitly configured identifier always wins
         String configured = environment.getProperty(ClusterProperties.CLUSTER_NODE_ID);
         if (configured != null)
             return configured;
 
+        // Otherwise derive one from the hostname, made unique per process
         String hostname = System.getenv("HOSTNAME");
         if (hostname == null)
             hostname = "guacamole";
@@ -88,6 +155,19 @@ public class ClusterModule extends AbstractModule {
 
     }
 
+    /**
+     * Builds the pool of guacd endpoints which this node may connect to. The
+     * pool is taken from, in order of precedence, a DNS name resolving to all
+     * guacd instances, an explicit list of guacd hosts, or the single default
+     * guacd configured in guacamole.properties.
+     *
+     * @return
+     *     The pool of guacd endpoints which this node may connect to.
+     *
+     * @throws GuacamoleException
+     *     If any of the properties defining the pool cannot be read or
+     *     parsed.
+     */
     private GuacdPool buildPool() throws GuacamoleException {
 
         int port = environment.getProperty(ClusterProperties.GUACD_CLUSTER_PORT,
@@ -96,10 +176,13 @@ public class ClusterModule extends AbstractModule {
         EncryptionMethod encryptionMethod =
                 environment.getDefaultGuacamoleProxyConfiguration().getEncryptionMethod();
 
+        // A DNS name takes precedence, as it tracks guacd instances being
+        // added or removed without a configuration change
         String dns = environment.getProperty(ClusterProperties.GUACD_CLUSTER_DNS);
         if (dns != null)
             return GuacdPool.fromDns(dns, port, encryptionMethod, DNS_CACHE_MS);
 
+        // Otherwise use a static list of guacd hosts, if provided
         String hosts = environment.getProperty(ClusterProperties.GUACD_CLUSTER_HOSTS);
         if (hosts != null)
             return GuacdPool.fromHostList(hosts, port, encryptionMethod);
@@ -120,6 +203,8 @@ public class ClusterModule extends AbstractModule {
 
         try {
 
+            // The guacd pool and selector are bound whether or not clustering
+            // is enabled, as tunnel creation always goes through them
             GuacdPool pool = buildPool();
             long circuitBreak = environment.getProperty(
                     ClusterProperties.GUACD_CIRCUIT_BREAK_DURATION, DEFAULT_CIRCUIT_BREAK);
@@ -129,6 +214,7 @@ public class ClusterModule extends AbstractModule {
 
             if (isEnabled(environment)) {
 
+                // Read the Redis connection and timing configuration
                 String uri = environment.getRequiredProperty(
                         ClusterProperties.CLUSTER_REDIS_URI);
 
@@ -146,6 +232,7 @@ public class ClusterModule extends AbstractModule {
                 // connected to
                 String posture = ClusterSecurityPolicy.check(uri, allowInsecure);
 
+                // Connect to Redis and begin advertising this node
                 store = new RedisClusterStore(uri, staleWindow, resolveNodeId(),
                         environment.getProperty(ClusterProperties.CLUSTER_REDIS_CA_CERT));
                 heartbeat = new ClusterHeartbeat(store, interval);
@@ -164,10 +251,13 @@ public class ClusterModule extends AbstractModule {
                             + "denied or failed {} of the operations it depends "
                             + "on: {}. Clustering will appear to work while "
                             + "silently falling back to per-replica behaviour. "
-                            + "See deploy/redis-acl.md for the required "
-                            + "permissions.", denied.size(), denied);
+                            + "The Redis user must be allowed every listed command "
+                            + "on keys and channels matching \"guac:*\".",
+                            denied.size(), denied);
 
             }
+            // Clustering disabled: bind a store which coordinates nothing and
+            // a heartbeat which is never started
             else {
                 store = new NoOpClusterStore();
                 heartbeat = new ClusterHeartbeat(store, DEFAULT_HEARTBEAT_INTERVAL);

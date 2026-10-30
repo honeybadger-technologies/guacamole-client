@@ -24,7 +24,8 @@ import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration;
 import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMethod;
 
 /**
- * A single guacd instance: hostname, port, and required encryption method.
+ * A single guacd instance, identified by its hostname, port, and the
+ * encryption method required to communicate with it.
  *
  * The string form produced by toKey() is stored in Redis as the value of a
  * route entry and as part of a load index key. "|" is used as the separator
@@ -32,35 +33,105 @@ import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMetho
  */
 public class GuacdEndpoint {
 
+    /**
+     * The separator placed between the hostname, port, and encryption method
+     * in the string form of an endpoint. "|" is used rather than ":" because
+     * IPv6 literal addresses contain ":" and would otherwise be ambiguous.
+     */
     private static final String SEPARATOR = "|";
 
+    /**
+     * The hostname or IP address of the guacd instance.
+     */
     private final String hostname;
+
+    /**
+     * The TCP port on which the guacd instance listens.
+     */
     private final int port;
+
+    /**
+     * The encryption method that must be used when connecting to the guacd
+     * instance.
+     */
     private final EncryptionMethod encryptionMethod;
 
+    /**
+     * Creates a new GuacdEndpoint describing the guacd instance at the given
+     * hostname and port, requiring the given encryption method.
+     *
+     * @param hostname
+     *     The hostname or IP address of the guacd instance.
+     *
+     * @param port
+     *     The TCP port on which the guacd instance listens.
+     *
+     * @param encryptionMethod
+     *     The encryption method that must be used when connecting to the
+     *     guacd instance.
+     */
     public GuacdEndpoint(String hostname, int port, EncryptionMethod encryptionMethod) {
         this.hostname = hostname;
         this.port = port;
         this.encryptionMethod = encryptionMethod;
     }
 
+    /**
+     * Creates a new GuacdEndpoint describing the same guacd instance as the
+     * given proxy configuration.
+     *
+     * @param config
+     *     The proxy configuration describing the guacd instance.
+     *
+     * @return
+     *     A new GuacdEndpoint having the same hostname, port, and encryption
+     *     method as the given proxy configuration.
+     */
     public static GuacdEndpoint from(GuacamoleProxyConfiguration config) {
         return new GuacdEndpoint(config.getHostname(), config.getPort(),
                 config.getEncryptionMethod());
     }
 
+    /**
+     * Returns the hostname or IP address of the guacd instance.
+     *
+     * @return
+     *     The hostname or IP address of the guacd instance.
+     */
     public String getHostname() {
         return hostname;
     }
 
+    /**
+     * Returns the TCP port on which the guacd instance listens.
+     *
+     * @return
+     *     The TCP port on which the guacd instance listens.
+     */
     public int getPort() {
         return port;
     }
 
+    /**
+     * Returns the encryption method that must be used when connecting to the
+     * guacd instance.
+     *
+     * @return
+     *     The encryption method that must be used when connecting to the
+     *     guacd instance.
+     */
     public EncryptionMethod getEncryptionMethod() {
         return encryptionMethod;
     }
 
+    /**
+     * Returns a proxy configuration which can be used to establish a
+     * connection to the guacd instance described by this endpoint.
+     *
+     * @return
+     *     A new GuacamoleProxyConfiguration having the same hostname, port,
+     *     and encryption method as this endpoint.
+     */
     public GuacamoleProxyConfiguration toProxyConfiguration() {
         return new GuacamoleProxyConfiguration(hostname, port, encryptionMethod);
     }
@@ -90,6 +161,8 @@ public class GuacdEndpoint {
      */
     public static GuacdEndpoint fromKey(String key) {
 
+        // Locate the first two separators. The hostname cannot contain "|",
+        // so the first separator always ends the hostname
         int portStart = key.indexOf(SEPARATOR);
         int methodStart = key.indexOf(SEPARATOR, portStart + 1);
 

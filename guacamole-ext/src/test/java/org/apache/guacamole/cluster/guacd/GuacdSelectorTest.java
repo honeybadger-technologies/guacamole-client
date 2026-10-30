@@ -32,14 +32,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Unit tests for GuacdSelector, which chooses the guacd instance for a new
+ * connection by cluster-wide load and routes a share key join to the guacd
+ * instance that owns the shared connection. Load and routes come from an in-
+ * memory fake store, and the candidate pool is a fixed list, so selection
+ * decisions can be checked deterministically. Circuit breaking of failed
+ * endpoints, its expiry, and the empty pool case are also covered.
+ */
 public class GuacdSelectorTest {
 
+    /**
+     * The first guacd endpoint of the test pools.
+     */
     private static final GuacdEndpoint A =
             new GuacdEndpoint("guacd-a", 4822, EncryptionMethod.NONE);
 
+    /**
+     * The second guacd endpoint of the test pools.
+     */
     private static final GuacdEndpoint B =
             new GuacdEndpoint("guacd-b", 4822, EncryptionMethod.NONE);
 
+    /**
+     * The third guacd endpoint of the test pools.
+     */
     private static final GuacdEndpoint C =
             new GuacdEndpoint("guacd-c", 4822, EncryptionMethod.NONE);
 
@@ -48,13 +65,41 @@ public class GuacdSelectorTest {
      */
     private static class FakeStore extends NoOpClusterStore {
 
+        /**
+         * The tunnel count reported for each endpoint, keyed by the endpoint's
+         * key form. Endpoints absent from this map report zero tunnels.
+         */
         private final Map<String, Long> load = new HashMap<String, Long>();
+
+        /**
+         * The guacd endpoint owning each connection, keyed by guacd connection
+         * ID. Connections absent from this map have no route.
+         */
         private final Map<String, GuacdEndpoint> routes = new HashMap<String, GuacdEndpoint>();
 
+        /**
+         * Sets the number of tunnels this store reports for the given endpoint.
+         *
+         * @param endpoint
+         *     The endpoint whose load should be set.
+         *
+         * @param count
+         *     The number of tunnels to report for that endpoint.
+         */
         void setLoad(GuacdEndpoint endpoint, long count) {
             load.put(endpoint.toKey(), count);
         }
 
+        /**
+         * Records that the connection having the given guacd connection ID is
+         * owned by the given endpoint.
+         *
+         * @param connectionId
+         *     The guacd connection ID of the connection.
+         *
+         * @param endpoint
+         *     The endpoint which owns that connection.
+         */
         void setRoute(String connectionId, GuacdEndpoint endpoint) {
             routes.put(connectionId, endpoint);
         }
@@ -72,6 +117,16 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Returns a pool which always offers exactly the given endpoints as
+     * candidates, in the given order.
+     *
+     * @param endpoints
+     *     The candidate endpoints the pool should offer.
+     *
+     * @return
+     *     A pool offering the given endpoints.
+     */
     private GuacdPool poolOf(final List<GuacdEndpoint> endpoints) {
         return new GuacdPool() {
 
@@ -83,6 +138,13 @@ public class GuacdSelectorTest {
         };
     }
 
+    /**
+     * Verifies that a new connection is assigned to the candidate with the
+     * fewest tunnels across the cluster.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void selectsTheLeastLoadedEndpoint() throws Exception {
 
@@ -98,6 +160,14 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that a join is routed to the endpoint owning the shared
+     * connection, even when that endpoint is the most heavily loaded, since
+     * only that guacd instance can join the connection.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void routesAJoinToTheOwningEndpoint() throws Exception {
 
@@ -113,6 +183,11 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that a join whose connection has no route fails, rather than
+     * being sent to an arbitrary guacd instance that cannot hold the
+     * connection.
+     */
     @Test
     public void failsClosedWhenAJoinTargetIsGone() {
 
@@ -132,6 +207,13 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that an endpoint marked as failed is skipped for new connections
+     * while its circuit break lasts, even when it is the least loaded.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void skipsCircuitBrokenEndpoints() throws Exception {
 
@@ -149,6 +231,13 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that an endpoint marked as failed becomes eligible again once
+     * its circuit break duration has elapsed.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void recoversAfterTheCircuitBreakExpires() throws Exception {
 
@@ -166,6 +255,13 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that, when every candidate is circuit broken, one of them is
+     * still selected rather than refusing the connection outright.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void usesAllEndpointsWhenEveryOneIsCircuitBroken() throws Exception {
 
@@ -183,6 +279,10 @@ public class GuacdSelectorTest {
 
     }
 
+    /**
+     * Verifies that selection fails with an exception when the pool offers no
+     * candidates at all.
+     */
     @Test
     public void failsWhenThePoolIsEmpty() {
 

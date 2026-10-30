@@ -24,19 +24,29 @@ package org.apache.guacamole.cluster;
  */
 public enum SeatResult {
 
-    /** All limits were satisfied and the seats are now held. */
+    /**
+     * All limits were satisfied and the seats are now held.
+     */
     SUCCESS,
 
-    /** The connection is at its overall concurrent-use limit. */
+    /**
+     * The connection is at its overall concurrent-use limit.
+     */
     CONNECTION_LIMIT,
 
-    /** This user is at their per-connection concurrent-use limit. */
+    /**
+     * This user is at their per-connection concurrent-use limit.
+     */
     USER_CONNECTION_LIMIT,
 
-    /** The balancing group is at its overall concurrent-use limit. */
+    /**
+     * The balancing group is at its overall concurrent-use limit.
+     */
     GROUP_LIMIT,
 
-    /** This user is at their per-group concurrent-use limit. */
+    /**
+     * This user is at their per-group concurrent-use limit.
+     */
     USER_GROUP_LIMIT
 
 }

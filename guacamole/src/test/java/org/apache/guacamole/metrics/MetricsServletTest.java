@@ -27,7 +27,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Tests which requests the metrics endpoint answers.
+ * Tests MetricsServlet, verifying which requests the metrics endpoint answers
+ * and with what status and body.
  *
  * The servlet's decision logic is tested directly rather than through mock
  * request and response objects: this module has no mocking library, and
@@ -36,14 +37,26 @@ import org.junit.Test;
  */
 public class MetricsServletTest {
 
+    /**
+     * The bearer token configured on the servlet under test.
+     */
     private static final String TOKEN = "a-long-random-scrape-token";
 
+    /**
+     * Resets the shared metrics registry before each test and registers a
+     * single known gauge, so that each test starts from a predictable
+     * registry whose rendered output can be checked.
+     */
     @Before
     public void setUp() {
         ClusterMetrics.reset();
         ClusterMetrics.gauge("guacamole_cluster_enabled", 1);
     }
 
+    /**
+     * Verifies that a request carrying the configured bearer token receives
+     * a 200 whose body is the rendered metrics registry.
+     */
     @Test
     public void servesTheRegistryWithACorrectToken() {
 
@@ -56,6 +69,10 @@ public class MetricsServletTest {
 
     }
 
+    /**
+     * Verifies that a request without an Authorization header receives a 401
+     * with an empty body.
+     */
     @Test
     public void refusesAMissingToken() {
 
@@ -67,6 +84,11 @@ public class MetricsServletTest {
 
     }
 
+    /**
+     * Verifies that a token of the correct length but the wrong content is
+     * refused with a 401, exercising the constant-time comparison itself
+     * rather than the length check performed before it.
+     */
     @Test
     public void refusesAWrongTokenOfTheSameLength() {
 
@@ -81,6 +103,10 @@ public class MetricsServletTest {
 
     }
 
+    /**
+     * Verifies that the correct token presented under a scheme other than
+     * Bearer is refused with a 401.
+     */
     @Test
     public void refusesAHeaderThatIsNotBearer() {
 
@@ -91,6 +117,11 @@ public class MetricsServletTest {
 
     }
 
+    /**
+     * Verifies that a disabled endpoint answers even a correctly authorised
+     * request with a 404 and an empty body, making it indistinguishable from
+     * an endpoint that does not exist.
+     */
     @Test
     public void looksLikeItWasNeverBuiltWhenDisabled() {
 
@@ -102,6 +133,11 @@ public class MetricsServletTest {
 
     }
 
+    /**
+     * Verifies that an enabled servlet with no configured token refuses every
+     * request with a 401, so that the endpoint fails closed even if the
+     * startup check in MetricsModule is bypassed.
+     */
     @Test
     public void refusesEverythingWhenNoTokenIsConfigured() {
 

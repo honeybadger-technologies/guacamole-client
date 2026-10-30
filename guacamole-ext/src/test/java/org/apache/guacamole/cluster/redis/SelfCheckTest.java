@@ -32,10 +32,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests the startup self-check of the Redis permission surface.
+ * Tests the startup self-check of the Redis permission surface performed by
+ * {@link RedisClusterStore#selfCheck()}, which probes every class of Redis
+ * command the store depends on and reports each one that fails. Runs against
+ * a real Redis started by Testcontainers, and is skipped when Docker is
+ * unavailable.
  */
 public class SelfCheckTest {
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
     /**
@@ -44,31 +53,53 @@ public class SelfCheckTest {
      */
     private static final int PROBE_COUNT = 8;
 
+    /**
+     * Skips this class rather than failing it when no Docker daemon is
+     * reachable, since a Redis-backed test cannot be meaningfully run
+     * without one.
+     */
     @BeforeAll
     public static void requireDocker() {
         Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
+    /**
+     * The store under test, connected to an unrestricted Redis.
+     */
     private RedisClusterStore store;
 
+    /**
+     * Creates a fresh store under test and flushes the shared Redis so that
+     * no state leaks between tests.
+     */
     @BeforeEach
     public void setUp() {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
         store.flushForTesting();
     }
 
+    /**
+     * Shuts down the store under test.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
     }
 
+    /**
+     * Verifies that a Redis with no ACL restrictions reports no failures,
+     * so that a correctly provisioned deployment starts without warnings.
+     */
     @Test
     public void anUnrestrictedRedisPassesEveryCheck() {
         List<String> failures = store.selfCheck();
         assertTrue(failures.isEmpty(), "unexpected failures: " + failures);
     }
 
+    /**
+     * Verifies that the self-check deletes every probe key it created.
+     */
     @Test
     public void theCheckLeavesNothingBehind() {
 
@@ -80,6 +111,11 @@ public class SelfCheckTest {
 
     }
 
+    /**
+     * Verifies that a Redis which cannot be reached at all causes every
+     * probe to be reported as a failure, rather than the self-check throwing
+     * and aborting startup.
+     */
     @Test
     public void anUnreachableRedisReportsEveryProbeRatherThanThrowing() {
 

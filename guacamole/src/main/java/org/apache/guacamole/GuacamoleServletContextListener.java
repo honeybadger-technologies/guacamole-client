@@ -151,8 +151,9 @@ public class GuacamoleServletContextListener extends GuiceServletContextListener
     private ListenerService listenerService;
 
     /**
-     * The authentication service, which holds a cluster store of its own since
-     * P4b. Injected here solely so that contextDestroyed can release it.
+     * The authentication service, which holds a cluster store of its own,
+     * separate from that of any extension. Injected here solely so that
+     * contextDestroyed can release that store.
      */
     @Inject
     private AuthenticationService authenticationService;

@@ -337,7 +337,6 @@ public class AuthenticationProviderFacade
             authProvider.shutdown();
     }
 
-
     @Override
     public AuthenticatedUser rehydrate(String username, Credentials skeleton)
             throws GuacamoleException {
@@ -350,6 +349,8 @@ public class AuthenticationProviderFacade
         if (!(authProvider instanceof RehydratableAuthenticationProvider))
             return null;
 
+        // Otherwise, let the wrapped provider decide whether the user may
+        // have their session rebuilt
         return ((RehydratableAuthenticationProvider) authProvider)
                 .rehydrate(username, skeleton);
 

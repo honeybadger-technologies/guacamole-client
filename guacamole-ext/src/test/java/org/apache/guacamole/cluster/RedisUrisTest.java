@@ -24,31 +24,55 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
+/**
+ * Unit tests for RedisUris.redact(), which produces a form of a Redis URI that
+ * is safe to log. These tests verify that any user and password are replaced,
+ * that the scheme (and therefore whether TLS is in use) remains visible, and
+ * that a URI which cannot be understood is never echoed.
+ */
 public class RedisUrisTest {
 
+    /**
+     * Verifies that a URI containing no credentials is returned unchanged.
+     */
     @Test
     public void aUriWithoutCredentialsIsUnchanged() {
         assertEquals("redis://redis:6379", RedisUris.redact("redis://redis:6379"));
     }
 
+    /**
+     * Verifies that a password given without a username is replaced.
+     */
     @Test
     public void aPasswordIsRemoved() {
         assertEquals("redis://***@redis:6379",
                 RedisUris.redact("redis://:hunter2@redis:6379"));
     }
 
+    /**
+     * Verifies that both the username and the password are replaced, while the
+     * host and port are kept.
+     */
     @Test
     public void aUserAndPasswordAreRemoved() {
         assertEquals("rediss://***@redis.example.com:6379",
                 RedisUris.redact("rediss://guacamole:hunter2@redis.example.com:6379"));
     }
 
+    /**
+     * Verifies that the "rediss://" scheme is preserved, so the log still shows
+     * whether the connection is encrypted.
+     */
     @Test
     public void theSchemeSurvivesSoEncryptionRemainsVisible() {
         assertEquals("rediss://***@redis:6379",
                 RedisUris.redact("rediss://guacamole:hunter2@redis:6379"));
     }
 
+    /**
+     * Verifies that a password which itself contains "@" is removed entirely,
+     * with no fragment of it left in the redacted URI.
+     */
     @Test
     public void aPasswordContainingAnAtSignIsStillRemoved() {
 
@@ -59,6 +83,10 @@ public class RedisUrisTest {
 
     }
 
+    /**
+     * Verifies that an unparseable or null URI is replaced by a fixed
+     * placeholder rather than being returned as-is.
+     */
     @Test
     public void anUnparseableUriIsNotEchoed() {
 

@@ -197,12 +197,14 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         bind(PasswordEncryptionService.class).to(SHA256PasswordEncryptionService.class);
         bind(PasswordPolicyService.class);
         bind(SaltService.class).to(SecureRandomSaltService.class);
-        // Cluster coordination (no-op unless cluster-enabled is true)
+        // Bind cluster coordination services (no-op unless cluster-enabled is
+        // true)
         install(new ClusterModule(environment));
 
         // Share keys cross replicas only when clustering is on. A property that
-        // cannot be read degrades to single-replica sharing rather than failing
-        // the whole authentication provider to load.
+        // cannot be read is reported as a configuration error, which Guice
+        // raises once configuration completes; until then, the single-replica
+        // map is bound so the remaining bindings can still be configured.
         boolean clusterEnabled = false;
         try {
             clusterEnabled = ClusterModule.isEnabled(environment);

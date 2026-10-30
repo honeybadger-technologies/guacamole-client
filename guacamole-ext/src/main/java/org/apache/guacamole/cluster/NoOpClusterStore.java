@@ -137,7 +137,7 @@ public class NoOpClusterStore implements ClusterStore {
     @Override
     public int recordAuthenticationFailure(String address, int banDurationSeconds) {
         // No cluster exists to count against; the caller falls back to its own
-        // replica-local tracking, which is upstream behaviour
+        // replica-local tracking, exactly as without clustering
         return -1;
     }
 
@@ -181,13 +181,11 @@ public class NoOpClusterStore implements ClusterStore {
         // No resources are held
     }
 
-
     @Override
     public List<String> selfCheck() {
         // Nothing to check: no cluster, no permissions, no failures
         return Collections.emptyList();
     }
-
 
     @Override
     public void publishMetrics() {

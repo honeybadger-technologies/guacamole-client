@@ -44,6 +44,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests atomic seat acquisition and release in {@link RedisClusterStore},
+ * which enforces connection, per-user and balancing group concurrency
+ * limits across every replica through a single Lua script. Runs against a
+ * real Redis started by Testcontainers, and is skipped when Docker is
+ * unavailable.
+ */
 public class SeatAcquisitionTest {
 
     /**
@@ -59,12 +66,35 @@ public class SeatAcquisitionTest {
     }
 
 
+    /**
+     * The stale window given to the store, in milliseconds. Index members
+     * whose score is older than this are treated as left behind by a dead
+     * replica.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
+    /**
+     * The raw Lettuce client used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private RedisClient client;
+
+    /**
+     * The raw connection used to inspect and manipulate Redis directly,
+     * independently of the store under test.
+     */
     private StatefulRedisConnection<String, String> connection;
+
+    /**
+     * The store under test, acting as replica "test-node".
+     */
     private RedisClusterStore store;
 
+    /**
+     * Opens a raw connection to the shared Redis container, flushes it so
+     * that no state leaks between tests, and creates a fresh store under
+     * test.
+     */
     @BeforeEach
     public void setUp() {
         client = RedisClient.create(RedisTestSupport.redisUri());
@@ -73,6 +103,10 @@ public class SeatAcquisitionTest {
         store = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "test-node");
     }
 
+    /**
+     * Shuts down the store under test and closes the raw connection and
+     * client, releasing every connection opened by {@link #setUp()}.
+     */
     @AfterEach
     public void tearDown() {
         store.shutdown();
@@ -83,6 +117,20 @@ public class SeatAcquisitionTest {
     /**
      * Builds a request for a single connection limited to the given number of
      * concurrent uses, with no per-user or group limits.
+     *
+     * @param uuid
+     *     The seat token (tunnel UUID) requesting the seat.
+     *
+     * @param connectionId
+     *     The identifier of the connection whose seat is requested.
+     *
+     * @param limit
+     *     The maximum number of concurrent uses of the connection, where zero
+     *     means unlimited.
+     *
+     * @return
+     *     A seat request against the connection index alone, which reports
+     *     {@link SeatResult#CONNECTION_LIMIT} when the limit is reached.
      */
     private SeatRequest connectionRequest(String uuid, String connectionId, int limit) {
         return new SeatRequest(uuid, Arrays.asList(
@@ -90,6 +138,13 @@ public class SeatAcquisitionTest {
                         SeatResult.CONNECTION_LIMIT)));
     }
 
+    /**
+     * Verifies that seats are granted until the limit is reached and the
+     * next distinct tunnel is refused with the connection limit result.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void grantsUpToTheLimitThenRefuses() throws Exception {
 
@@ -100,6 +155,13 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that a limit of zero imposes no limit at all, matching the
+     * meaning of zero in the standalone concurrency limits.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void treatsZeroLimitAsUnlimited() throws Exception {
 
@@ -109,6 +171,14 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that, when a request carries several limits, the refusal
+     * reports the result of the specific limit that was reached, so the user
+     * is told why the connection was refused.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void reportsWhichLimitFailed() throws Exception {
 
@@ -124,6 +194,14 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that acquiring the same seats again for the same tunnel
+     * succeeds without consuming a second seat, so that a retried
+     * acquisition cannot lock its own tunnel out.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void isIdempotentForTheSameTunnel() throws Exception {
 
@@ -137,6 +215,14 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that a member whose score is outside the stale window neither
+     * blocks a new acquisition nor survives it, since the script prunes such
+     * members before checking the limit.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired.
+     */
     @Test
     public void ignoresStaleMembers() throws Exception {
 
@@ -152,6 +238,13 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that releasing a held seat immediately makes it available to
+     * another tunnel.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired or released.
+     */
     @Test
     public void releaseFreesTheSeat() throws Exception {
 
@@ -161,6 +254,14 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that releasing a seat which was never acquired, repeatedly,
+     * neither fails nor leaves anything behind, since release may run more
+     * than once during tunnel teardown.
+     *
+     * @throws Exception
+     *     If a seat cannot be released.
+     */
     @Test
     public void releaseIsSafeToRepeat() throws Exception {
 
@@ -170,6 +271,14 @@ public class SeatAcquisitionTest {
 
     }
 
+    /**
+     * Verifies that many threads racing to acquire the same connection's
+     * seats are granted exactly the limit and no more, proving that the
+     * check and the insert happen atomically inside the script.
+     *
+     * @throws Exception
+     *     If waiting for the acquisition threads is interrupted.
+     */
     @Test
     public void neverExceedsTheLimitUnderConcurrency() throws Exception {
 

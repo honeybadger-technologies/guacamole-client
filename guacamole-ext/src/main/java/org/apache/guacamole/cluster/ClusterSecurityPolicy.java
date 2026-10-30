@@ -37,10 +37,11 @@ import org.slf4j.LoggerFactory;
  */
 public class ClusterSecurityPolicy {
 
+    /**
+     * Logger for this class.
+     */
     private static final Logger logger =
             LoggerFactory.getLogger(ClusterSecurityPolicy.class);
-
-    private ClusterSecurityPolicy() {}
 
     /**
      * Checks the given Redis URI, returning a one-line description of the
@@ -63,6 +64,8 @@ public class ClusterSecurityPolicy {
     public static String check(String uri, boolean allowInsecure)
             throws GuacamoleException {
 
+        // Classify the URI by the two properties that matter: TLS and
+        // credentials
         boolean parseable = uri != null && uri.contains("://");
         boolean encrypted = parseable && uri.startsWith("rediss://");
         boolean authenticated = hasCredentials(uri);
@@ -73,10 +76,12 @@ public class ClusterSecurityPolicy {
         ClusterMetrics.gauge("guacamole_cluster_redis_insecure",
                 parseable && encrypted && authenticated ? 0 : 1);
 
+        // Fully secured: nothing further to decide
         if (parseable && encrypted && authenticated)
             return "Cluster state is held in an authenticated, encrypted Redis ("
                     + RedisUris.redact(uri) + ").";
 
+        // Fail closed unless the operator has explicitly opted in
         if (!allowInsecure)
             throw new GuacamoleServerException("Refusing to hold cluster state "
                     + "in \"" + RedisUris.redact(uri) + "\": it is "
@@ -87,6 +92,7 @@ public class ClusterSecurityPolicy {
                     + "\"cluster-allow-insecure-redis\" to true to accept this "
                     + "deliberately.");
 
+        // Insecure but permitted: proceed, loudly
         logger.warn("Cluster state is held in an INSECURE Redis ({}): it is {}. "
                 + "Session identity in this keyspace is readable by anything "
                 + "that can reach the port. This was permitted by "

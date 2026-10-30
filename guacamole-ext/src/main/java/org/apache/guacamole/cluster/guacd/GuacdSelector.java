@@ -35,21 +35,67 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Chooses which guacd instance a connection should be established against.
+ * A new connection is placed on the least-loaded instance in the pool, as
+ * counted by the cluster store, while a join is always routed to the instance
+ * already hosting the connection being joined. Instances which recently failed
+ * are temporarily skipped (a "circuit break") so that a dead instance does not
+ * keep attracting new connections merely because it reports no load.
  */
 public class GuacdSelector {
 
+    /**
+     * Logger for this class.
+     */
     private static final Logger logger = LoggerFactory.getLogger(GuacdSelector.class);
 
+    /**
+     * The cluster store providing the per-instance tunnel counts used to
+     * measure load, and the routes used to locate the instance hosting an
+     * existing connection.
+     */
     private final ClusterStore store;
+
+    /**
+     * The pool of guacd instances from which new connections are placed.
+     */
     private final GuacdPool pool;
+
+    /**
+     * The number of milliseconds for which an instance that failed is
+     * excluded from selection for new connections.
+     */
     private final long circuitBreakMs;
+
+    /**
+     * The source of randomness used to shuffle candidates before comparing
+     * their load, so that ties are broken evenly.
+     */
     private final Random random = new Random();
 
     /**
-     * Endpoint key to the time at which its circuit break expires.
+     * Map of endpoint key, as produced by GuacdEndpoint.toKey(), to the time
+     * at which that endpoint's circuit break expires, in milliseconds since
+     * the epoch. Entries are never removed; an expired entry is simply
+     * ignored. This state is local to this replica and is not shared through
+     * the cluster store.
      */
     private final Map<String, Long> brokenUntil = new ConcurrentHashMap<String, Long>();
 
+    /**
+     * Creates a new GuacdSelector which places new connections on the guacd
+     * instances of the given pool, using the given cluster store to measure
+     * load and to locate existing connections.
+     *
+     * @param store
+     *     The cluster store providing per-instance tunnel counts and routes.
+     *
+     * @param pool
+     *     The pool of guacd instances from which new connections are placed.
+     *
+     * @param circuitBreakMs
+     *     The number of milliseconds for which an instance that failed is
+     *     excluded from selection for new connections.
+     */
     public GuacdSelector(ClusterStore store, GuacdPool pool, long circuitBreakMs) {
         this.store = store;
         this.pool = pool;
@@ -69,6 +115,17 @@ public class GuacdSelector {
                 endpoint, circuitBreakMs);
     }
 
+    /**
+     * Returns whether the given endpoint is currently circuit-broken, having
+     * failed within the last circuitBreakMs milliseconds.
+     *
+     * @param endpoint
+     *     The endpoint to check.
+     *
+     * @return
+     *     true if the given endpoint failed recently and should be skipped,
+     *     false otherwise.
+     */
     private boolean isBroken(GuacdEndpoint endpoint) {
         Long until = brokenUntil.get(endpoint.toKey());
         return until != null && System.currentTimeMillis() < until;
@@ -90,6 +147,8 @@ public class GuacdSelector {
      */
     public GuacdEndpoint selectForJoin(String guacdConnectionId) throws GuacamoleException {
 
+        // A route exists only while the hosting replica keeps heartbeating
+        // the connection, so a missing route means the connection is gone
         GuacdEndpoint endpoint = store.lookupRoute(guacdConnectionId);
         if (endpoint == null)
             throw new GuacamoleResourceNotFoundException(
@@ -114,6 +173,7 @@ public class GuacdSelector {
         if (candidates.isEmpty())
             throw new GuacamoleServerException("No guacd instances are available.");
 
+        // Exclude instances which failed recently
         List<GuacdEndpoint> usable = new ArrayList<GuacdEndpoint>(candidates.size());
         for (GuacdEndpoint candidate : candidates) {
             if (!isBroken(candidate))
@@ -131,6 +191,9 @@ public class GuacdSelector {
         // rather than always favouring the first in DNS order
         Collections.shuffle(usable, random);
 
+        // Pick the instance hosting the fewest live tunnels cluster-wide. If
+        // the store is unreachable every count is zero, which degrades to a
+        // random choice rather than a failure
         GuacdEndpoint best = null;
         long bestLoad = Long.MAX_VALUE;
 

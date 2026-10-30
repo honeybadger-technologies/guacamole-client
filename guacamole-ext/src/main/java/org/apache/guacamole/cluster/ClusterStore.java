@@ -150,6 +150,8 @@ public interface ClusterStore {
     String lookupSeatToken(String recordUuid);
 
     /**
+     * Returns the identity of this replica within the cluster.
+     *
      * @return
      *     The identity of this replica, as recorded on every tunnel this
      *     replica owns. Used to decide whether a tunnel can be closed locally
@@ -158,15 +160,10 @@ public interface ClusterStore {
     String getNodeId();
 
     /**
-     * @return
-     *     true if the backing store was reachable as of the most recent
-     *     operation, false if callers should degrade to replica-local behavior.
-     */
-    /**
      * Returns whether this store actually coordinates a cluster. A no-op store
      * answers false, which is how callers know that cluster-only routing (such
-     * as the join route table) does not apply and upstream behaviour should be
-     * used instead.
+     * as the join route table) does not apply and non-clustered behaviour
+     * should be used instead.
      *
      * @return
      *     true if cluster state is really being shared, false if clustering is
@@ -174,6 +171,14 @@ public interface ClusterStore {
      */
     boolean isClustered();
 
+    /**
+     * Returns whether the backing store was reachable as of the most recent
+     * operation.
+     *
+     * @return
+     *     true if the backing store was reachable as of the most recent
+     *     operation, false if callers should degrade to replica-local behavior.
+     */
     boolean isAvailable();
 
     /**
@@ -197,6 +202,10 @@ public interface ClusterStore {
     void requestKill(String recordUuid) throws GuacamoleException;
 
     /**
+     * Returns whether the tunnel having the given seat token is still
+     * published to the cluster, and has therefore neither been unregistered
+     * nor aged out.
+     *
      * @param seatToken
      *     The seat token identifying a tunnel.
      *
@@ -206,9 +215,6 @@ public interface ClusterStore {
      */
     boolean isTunnelLive(String seatToken);
 
-    /**
-     * Releases all resources held by this store.
-     */
     /**
      * Publishes the given share key to the cluster, so that it can be redeemed
      * on any replica. Failure to publish is logged rather than thrown: the key
@@ -361,8 +367,10 @@ public interface ClusterStore {
      */
     void publishLogout(String tokenHash);
 
+    /**
+     * Releases all resources held by this store.
+     */
     void shutdown();
-
 
     /**
      * Exercises every Redis operation this store depends on, returning one
@@ -377,7 +385,6 @@ public interface ClusterStore {
      *     succeeded.
      */
     List<String> selfCheck();
-
 
     /**
      * Publishes this store's current state as gauges, immediately before a

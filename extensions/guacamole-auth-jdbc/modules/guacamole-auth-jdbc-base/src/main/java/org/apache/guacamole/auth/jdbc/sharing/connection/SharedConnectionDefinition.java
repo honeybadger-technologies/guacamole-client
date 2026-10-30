@@ -72,7 +72,7 @@ public class SharedConnectionDefinition {
     private final String guacdConnectionId;
 
     /**
-     * Identifier of the user who shared the connection.
+     * The identifier of the user who shared the connection.
      */
     private final String sharedBy;
 
@@ -119,6 +119,9 @@ public class SharedConnectionDefinition {
         this.activeConnection = activeConnection;
         this.sharingProfile = sharingProfile;
         this.shareKey = shareKey;
+
+        // Copied out of the record so that callers can read them the same
+        // way whether or not the session is owned by this replica
         this.connection = activeConnection.getConnection();
         this.guacdConnectionId = activeConnection.getConnectionID();
         this.sharedBy = activeConnection.getUser().getIdentifier();
@@ -136,7 +139,7 @@ public class SharedConnectionDefinition {
      *     The connection ID issued by guacd for the session being shared.
      *
      * @param sharedBy
-     *     Identifier of the user who shared the connection.
+     *     The identifier of the user who shared the connection.
      *
      * @param sharingProfile
      *     A sharing profile whose associated parameters dictate the level of
@@ -149,6 +152,7 @@ public class SharedConnectionDefinition {
     public SharedConnectionDefinition(ModeledConnection connection,
             String guacdConnectionId, String sharedBy,
             ModeledSharingProfile sharingProfile, String shareKey) {
+        // No local record exists for a session owned by another replica
         this.activeConnection = null;
         this.sharingProfile = sharingProfile;
         this.shareKey = shareKey;

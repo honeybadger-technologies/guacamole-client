@@ -31,10 +31,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Guards the paths on which a Redis credential could escape into a log line or
  * an exception message, where the audience is wider than the set who can read
- * the Secret.
+ * the credential itself. The store is pointed at an endpoint on which
+ * nothing listens, so every operation fails without needing Docker, and each
+ * failure message is checked for the password.
  */
 public class CredentialLeakTest {
 
+    /**
+     * A distinctive password which must never appear in any exception or
+     * self-check message.
+     */
     private static final String PASSWORD = "hunter2-not-in-any-message";
 
     /**
@@ -44,6 +50,11 @@ public class CredentialLeakTest {
     private static final String URI =
             "redis://guacamole:" + PASSWORD + "@127.0.0.1:1";
 
+    /**
+     * Verifies that when seat acquisition fails because Redis is unreachable,
+     * the exception reaching the caller (and every cause in its chain) names
+     * the endpoint but not the password.
+     */
     @Test
     public void aConnectionFailureDoesNotNameThePasswordInAnException() {
 
@@ -74,6 +85,10 @@ public class CredentialLeakTest {
 
     }
 
+    /**
+     * Verifies that none of the failure descriptions returned by the startup
+     * self-check contain the password, since each is logged verbatim.
+     */
     @Test
     public void theSelfCheckDoesNotNameThePassword() {
 

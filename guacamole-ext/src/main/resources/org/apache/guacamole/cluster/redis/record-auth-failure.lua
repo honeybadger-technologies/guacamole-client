@@ -16,15 +16,24 @@
 -- under the License.
 
 
--- Records one authentication failure for a client address.
+-- Records one authentication failure for a client address, returning the
+-- number of failures recorded for that address within the ban window.
 --
--- KEYS[1] : the per-address failure counter
--- ARGV[1] : ban duration, in seconds
+-- KEYS[1]  The failure counter for the client address.
+-- ARGV[1]  The ban duration, in seconds.
+--
+-- Returns the value of the counter after it has been incremented.
 --
 -- Increments the counter and re-arms its expiry, mirroring the in-memory
 -- tracker, where each failure both increments failureCount and resets
--- lastFailure. Both operations must be one script: an INCR whose EXPIRE is
--- lost would leave an address banned permanently.
+-- lastFailure. The counter therefore expires only once a full ban duration
+-- has passed without a further failure.
+--
+-- Why a script: the increment and the expiry must happen together. If they
+-- were separate commands and the EXPIRE were lost (for example, because the
+-- connection failed between the two), the counter would never expire and the
+-- address would remain banned permanently.
+
 local count = redis.call('INCR', KEYS[1])
 redis.call('EXPIRE', KEYS[1], ARGV[1])
 return count

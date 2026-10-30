@@ -33,13 +33,26 @@ import org.testcontainers.DockerClientFactory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests delivery of cluster-wide kill requests, which
+ * {@link RedisClusterStore} broadcasts over Redis pub/sub so that a tunnel can
+ * be terminated from any replica regardless of which one holds it. Two stores
+ * act as two replicas sharing a real Redis started by Testcontainers; skipped
+ * when Docker is unavailable.
+ */
 public class KillDispatchTest {
 
+    /**
+     * The number of milliseconds after which an unrefreshed cluster entry is
+     * considered dead. Its value is irrelevant to these tests; it only needs
+     * to be long enough that nothing expires while a test runs.
+     */
     private static final long STALE_WINDOW_MS = 30000L;
 
     /**
      * Skips this class rather than failing it when no Docker daemon is
-     * reachable.
+     * reachable, since every test here needs the shared Redis container
+     * provided by {@link RedisTestSupport}.
      */
     @BeforeAll
     public static void requireDocker() {
@@ -47,21 +60,41 @@ public class KillDispatchTest {
                 "Docker is not available; skipping Redis-backed tests.");
     }
 
+    /**
+     * The replica ("node-1") which issues kill requests.
+     */
     private RedisClusterStore publisher;
+
+    /**
+     * A second replica ("node-2") which listens for kill requests.
+     */
     private RedisClusterStore subscriber;
 
+    /**
+     * Creates the two replicas, both connected to the shared Redis container.
+     */
     @BeforeEach
     public void setUp() {
         publisher = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-1");
         subscriber = new RedisClusterStore(RedisTestSupport.redisUri(), STALE_WINDOW_MS, "node-2");
     }
 
+    /**
+     * Shuts down both replicas, closing their pub/sub subscriptions.
+     */
     @AfterEach
     public void tearDown() {
         publisher.shutdown();
         subscriber.shutdown();
     }
 
+    /**
+     * Verifies that a kill requested on one replica is delivered, with the
+     * same connection record UUID, to the kill handler registered on another.
+     *
+     * @throws Exception
+     *     If the request cannot be published, or waiting is interrupted.
+     */
     @Test
     public void killRequestReachesAnotherReplica() throws Exception {
 
@@ -85,6 +118,13 @@ public class KillDispatchTest {
 
     }
 
+    /**
+     * Verifies that a kill request is also delivered to the replica which
+     * published it, since that replica may itself own the tunnel.
+     *
+     * @throws Exception
+     *     If the request cannot be published, or waiting is interrupted.
+     */
     @Test
     public void everyReplicaIsNotifiedIncludingThePublisher() throws Exception {
 

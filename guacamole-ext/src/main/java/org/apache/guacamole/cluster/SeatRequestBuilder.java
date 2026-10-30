@@ -34,9 +34,11 @@ import java.util.List;
  */
 public final class SeatRequestBuilder {
 
-    private SeatRequestBuilder() {}
-
     /**
+     * Returns the seats which must be held for a user to use the given
+     * connection: the user's per-connection seat, followed by a seat in the
+     * connection's overall index.
+     *
      * @param seatToken
      *     Identifier for the seats, minted at acquire time.
      *
@@ -61,6 +63,8 @@ public final class SeatRequestBuilder {
 
         List<SeatKey> keys = new ArrayList<SeatKey>(2);
 
+        // Per-user limit first, so its failure is reported in preference to
+        // the overall limit (see class documentation)
         keys.add(new SeatKey(
                 ClusterKeys.userConnectionSeat(username, connectionIdentifier),
                 maxConnectionsPerUser, SeatResult.USER_CONNECTION_LIMIT));
@@ -74,6 +78,10 @@ public final class SeatRequestBuilder {
     }
 
     /**
+     * Returns the seats which must be held for a user to use the given
+     * balancing group: the user's per-group seat, followed by a seat in the
+     * group's overall index.
+     *
      * @param seatToken
      *     Identifier for the seats, minted at acquire time.
      *
@@ -98,6 +106,8 @@ public final class SeatRequestBuilder {
 
         List<SeatKey> keys = new ArrayList<SeatKey>(2);
 
+        // Per-user limit first, so its failure is reported in preference to
+        // the overall limit (see class documentation)
         keys.add(new SeatKey(
                 ClusterKeys.userGroupSeat(username, groupIdentifier),
                 maxConnectionsPerUser, SeatResult.USER_GROUP_LIMIT));

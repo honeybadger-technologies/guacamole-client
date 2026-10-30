@@ -32,8 +32,6 @@ public class RedisUris {
      */
     private static final String UNPARSEABLE = "(redacted)";
 
-    private RedisUris() {}
-
     /**
      * Returns the given Redis URI with any credentials removed, leaving the
      * scheme, host and port.

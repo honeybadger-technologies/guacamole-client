@@ -17,7 +17,6 @@
  * under the License.
  */
 
-
 package org.apache.guacamole.cluster.metrics;
 
 import java.util.ArrayList;
@@ -31,15 +30,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests the cluster metrics registry and its rendering.
+ * Unit tests for ClusterMetrics, the static registry of cluster counters and
+ * gauges and its rendering in the Prometheus text exposition format. The
+ * registry is reset before each test, since it is shared process-wide state.
+ * These tests verify the rendered type lines and values, label escaping,
+ * counting under concurrent increments, and rendering of an empty registry.
  */
 public class ClusterMetricsTest {
 
+    /**
+     * Clears every recorded metric, so that each test starts from an empty
+     * registry regardless of what earlier tests recorded.
+     */
     @BeforeEach
     public void setUp() {
         ClusterMetrics.reset();
     }
 
+    /**
+     * Verifies that a labelled counter is rendered with its counter type line
+     * and the total of all increments.
+     */
     @Test
     public void rendersACounterWithItsTypeAndValue() {
 
@@ -56,6 +67,10 @@ public class ClusterMetricsTest {
 
     }
 
+    /**
+     * Verifies that a gauge is rendered with its gauge type line and only the
+     * most recently set value.
+     */
     @Test
     public void rendersAGaugeAsItsLatestValue() {
 
@@ -70,6 +85,10 @@ public class ClusterMetricsTest {
 
     }
 
+    /**
+     * Verifies that quotes and backslashes within a label value are escaped in
+     * the rendered output.
+     */
     @Test
     public void escapesLabelValues() {
 
@@ -83,6 +102,14 @@ public class ClusterMetricsTest {
 
     }
 
+    /**
+     * Verifies that no increment is lost when several threads increment the
+     * same counter concurrently. All threads are released together by a latch
+     * to maximise contention.
+     *
+     * @throws Exception
+     *     If an unexpected error occurs while running the test.
+     */
     @Test
     public void countsEveryIncrementUnderConcurrency() throws Exception {
 
@@ -125,6 +152,9 @@ public class ClusterMetricsTest {
 
     }
 
+    /**
+     * Verifies that an empty registry renders as an empty string.
+     */
     @Test
     public void rendersNothingWhenNothingHasBeenRecorded() {
         assertEquals("", ClusterMetrics.render());
