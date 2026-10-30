@@ -19,11 +19,14 @@
 
 package org.apache.guacamole.cluster.redis;
 
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -47,11 +50,36 @@ public class RedisClusterStore implements ClusterStore {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisClusterStore.class);
 
+    /**
+     * Seconds any single Redis command may take before it is abandoned. Seat
+     * acquisition sits directly in the connect path, so this bounds how long a
+     * user waits when Redis is degraded rather than cleanly down.
+     */
+    private static final long COMMAND_TIMEOUT_SECONDS = 2L;
+
+    /**
+     * Milliseconds before an unavailable store is probed again.
+     */
+    private static final long RETRY_INTERVAL_MS = 10000L;
+
     private static final String ACQUIRE_SEATS_SCRIPT =
             "/org/apache/guacamole/cluster/redis/acquire-seats.lua";
 
     private final RedisClient client;
-    private final StatefulRedisConnection<String, String> connection;
+
+    /**
+     * Established on first use rather than in the constructor. Connecting
+     * eagerly means a replica that starts while Redis is unreachable fails to
+     * build its Guice injector at all, which takes the whole authentication
+     * provider down with it -- the replica is then dead rather than degraded.
+     */
+    private volatile StatefulRedisConnection<String, String> connection;
+
+    /**
+     * When the store last failed, so an unavailable store is re-probed rather
+     * than written off for the lifetime of the replica.
+     */
+    private volatile long unavailableSince = 0L;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
@@ -69,14 +97,52 @@ public class RedisClusterStore implements ClusterStore {
      *     Identity of this replica.
      */
     public RedisClusterStore(String redisUri, long staleWindowMs, String nodeId) {
-        this.client = RedisClient.create(redisUri);
-        this.connection = client.connect();
+
+        // The timeout belongs on the URI; AbstractRedisClient.setDefaultTimeout
+        // is deprecated, and this module compiles with -Werror.
+        RedisURI parsedUri = RedisURI.create(redisUri);
+        parsedUri.setTimeout(Duration.ofSeconds(COMMAND_TIMEOUT_SECONDS));
+        this.client = RedisClient.create(parsedUri);
+
+        // Fail fast rather than queue. Lettuce's default is to buffer commands
+        // while the connection is down and wait out a long command timeout, so
+        // the first connect attempt after Redis becomes unreachable blocks for
+        // minutes instead of degrading -- measured at over 180 seconds on a
+        // live cluster. Rejecting immediately is what makes the documented
+        // fallback to per-replica limits actually reachable.
+        client.setOptions(ClientOptions.builder()
+                .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                .build());
+
         this.staleWindowMs = staleWindowMs;
         this.nodeId = nodeId;
     }
 
+    /**
+     * Returns the command interface, connecting if necessary.
+     *
+     * @return
+     *     The synchronous command interface.
+     *
+     * @throws RedisException
+     *     If a connection cannot be established.
+     */
     private RedisCommands<String, String> commands() {
-        return connection.sync();
+
+        StatefulRedisConnection<String, String> current = connection;
+        if (current != null && current.isOpen())
+            return current.sync();
+
+        synchronized (this) {
+
+            if (connection != null && connection.isOpen())
+                return connection.sync();
+
+            connection = client.connect();
+            return connection.sync();
+
+        }
+
     }
 
     @Override
@@ -108,6 +174,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to acquire cluster seats.", e);
         }
 
@@ -127,6 +194,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to release cluster seats.", e);
         }
 
@@ -210,6 +278,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to register tunnel with cluster.", e);
         }
 
@@ -235,6 +304,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to unregister tunnel from cluster.", e);
         }
 
@@ -269,6 +339,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to refresh cluster heartbeat.", e);
         }
 
@@ -290,6 +361,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             throw new GuacamoleServerException("Unable to look up guacd route.", e);
         }
 
@@ -314,6 +386,7 @@ public class RedisClusterStore implements ClusterStore {
         }
         catch (RedisException e) {
             available = false;
+            unavailableSince = System.currentTimeMillis();
             logger.warn("Unable to count tunnels for guacd \"{}\". Treating as unloaded.",
                     endpoint, e);
             return 0L;
@@ -328,13 +401,25 @@ public class RedisClusterStore implements ClusterStore {
 
     @Override
     public boolean isAvailable() {
-        return available;
+
+        if (available)
+            return true;
+
+        // Re-probe periodically. Without this a replica that saw one failure
+        // would use replica-local limits forever, even after Redis returned.
+        return System.currentTimeMillis() - unavailableSince > RETRY_INTERVAL_MS;
+
     }
 
     @Override
     public void shutdown() {
-        connection.close();
+
+        StatefulRedisConnection<String, String> current = connection;
+        if (current != null)
+            current.close();
+
         client.shutdown();
+
     }
 
 }
