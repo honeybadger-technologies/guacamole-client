@@ -378,4 +378,11 @@ public interface ClusterStore {
      */
     List<String> selfCheck();
 
+
+    /**
+     * Publishes this store's current state as gauges, immediately before a
+     * scrape reads them.
+     */
+    void publishMetrics();
+
 }

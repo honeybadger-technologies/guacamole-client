@@ -183,6 +183,7 @@ public class AuthenticationService {
 
         String redisUri;
         boolean allowInsecure;
+        String caCertificate;
 
         try {
 
@@ -195,6 +196,9 @@ public class AuthenticationService {
 
             allowInsecure = environment.getProperty(
                     ClusterProperties.CLUSTER_ALLOW_INSECURE_REDIS, false);
+
+            caCertificate = environment.getProperty(
+                    ClusterProperties.CLUSTER_REDIS_CA_CERT);
 
         }
 
@@ -220,7 +224,7 @@ public class AuthenticationService {
             throw new IllegalStateException(e.getMessage(), e);
         }
 
-        return new RedisClusterStore(redisUri, 30000L, "webapp");
+        return new RedisClusterStore(redisUri, 30000L, "webapp", caCertificate);
 
     }
 
@@ -903,6 +907,21 @@ public class AuthenticationService {
 
     }
 
+
+    /**
+     * Returns the cluster store this replica holds session identity in.
+     *
+     * Exposed so that the metrics endpoint can sample the store's gauges
+     * without naming the implementation class a second time -- the single
+     * reference in createClusterStore is what a later split of the cluster
+     * package into its own artifact has to remove.
+     *
+     * @return
+     *     The web application's cluster store.
+     */
+    public ClusterStore getClusterStore() {
+        return clusterStore;
+    }
 
     /**
      * Releases the cluster resources held by this service.

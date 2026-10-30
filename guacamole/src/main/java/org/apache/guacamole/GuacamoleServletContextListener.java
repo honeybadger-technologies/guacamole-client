@@ -40,6 +40,7 @@ import org.apache.guacamole.net.event.ApplicationStartedEvent;
 import org.apache.guacamole.properties.BooleanGuacamoleProperty;
 import org.apache.guacamole.properties.FileGuacamoleProperties;
 import org.apache.guacamole.rest.RESTServiceModule;
+import org.apache.guacamole.metrics.MetricsModule;
 import org.apache.guacamole.rest.auth.AuthenticationService;
 import org.apache.guacamole.rest.auth.HashTokenSessionMap;
 import org.apache.guacamole.rest.auth.TokenSessionMap;
@@ -260,7 +261,8 @@ public class GuacamoleServletContextListener extends GuiceServletContextListener
                     .createChildInjector(
                         new ExtensionModule(environment),
                         new RESTServiceModule(sessionMap),
-                        new TunnelModule()
+                        new TunnelModule(),
+                        new MetricsModule(environment)
                     );
 
             return injector;
