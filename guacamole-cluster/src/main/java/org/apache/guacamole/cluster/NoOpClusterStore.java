@@ -82,6 +82,11 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public boolean isClustered() {
+        return false;
+    }
+
+    @Override
     public boolean isAvailable() {
         return false;
     }
@@ -99,6 +104,31 @@ public class NoOpClusterStore implements ClusterStore {
     @Override
     public boolean isTunnelLive(String seatToken) {
         return false;
+    }
+
+    @Override
+    public void putShareKey(String shareKey, SharedConnectionEntry entry) {
+        // Share keys never leave this replica when clustering is disabled
+    }
+
+    @Override
+    public SharedConnectionEntry getShareKey(String shareKey) {
+        return null;
+    }
+
+    @Override
+    public void removeShareKey(String shareKey) {
+        // Nothing was ever stored
+    }
+
+    @Override
+    public void onShareRevoked(ClusterShareRevocationHandler handler) {
+        // Nothing to subscribe to when clustering is disabled
+    }
+
+    @Override
+    public void publishShareRevocation(String shareKey) {
+        // No other replica exists to announce to
     }
 
     @Override

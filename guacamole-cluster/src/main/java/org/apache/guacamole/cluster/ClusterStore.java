@@ -160,6 +160,18 @@ public interface ClusterStore {
      *     true if the backing store was reachable as of the most recent
      *     operation, false if callers should degrade to replica-local behavior.
      */
+    /**
+     * Returns whether this store actually coordinates a cluster. A no-op store
+     * answers false, which is how callers know that cluster-only routing (such
+     * as the join route table) does not apply and upstream behaviour should be
+     * used instead.
+     *
+     * @return
+     *     true if cluster state is really being shared, false if clustering is
+     *     disabled.
+     */
+    boolean isClustered();
+
     boolean isAvailable();
 
     /**
@@ -195,6 +207,61 @@ public interface ClusterStore {
     /**
      * Releases all resources held by this store.
      */
+    /**
+     * Publishes the given share key to the cluster, so that it can be redeemed
+     * on any replica. Failure to publish is logged rather than thrown: the key
+     * then works only on the replica which issued it.
+     *
+     * @param shareKey
+     *     The share key being issued.
+     *
+     * @param entry
+     *     Everything that key resolves to.
+     */
+    void putShareKey(String shareKey, SharedConnectionEntry entry);
+
+    /**
+     * Returns everything the given share key resolves to.
+     *
+     * @param shareKey
+     *     The share key being redeemed.
+     *
+     * @return
+     *     The cluster state behind the given share key, or null if the key is
+     *     unknown or cannot be read.
+     */
+    SharedConnectionEntry getShareKey(String shareKey);
+
+    /**
+     * Removes the given share key from the cluster, so that it can no longer
+     * be redeemed anywhere.
+     *
+     * @param shareKey
+     *     The share key being removed.
+     */
+    void removeShareKey(String shareKey);
+
+    /**
+     * Registers the handler to be invoked when a share key is revoked anywhere
+     * in the cluster, so that tunnels opened from that key on this replica can
+     * be closed.
+     *
+     * @param handler
+     *     The handler to invoke on revocation.
+     */
+    void onShareRevoked(ClusterShareRevocationHandler handler);
+
+    /**
+     * Announces to every replica that the given share key has been revoked.
+     * Failure to announce is logged rather than thrown: the key is already
+     * unredeemable, and only the closing of tunnels already opened from it
+     * elsewhere is lost.
+     *
+     * @param shareKey
+     *     The share key which is no longer valid.
+     */
+    void publishShareRevocation(String shareKey);
+
     void shutdown();
 
 }

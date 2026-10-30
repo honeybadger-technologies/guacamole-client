@@ -59,6 +59,17 @@ public class NoOpClusterStoreTest {
     }
 
     @Test
+    public void disabledClusteringIsNotClustered() throws Exception {
+
+        // selectGuacdEndpoint consults this before routing a join through the
+        // cluster route table. False sends it down the upstream path instead;
+        // a true here would fail every share-key join closed, because a no-op
+        // store has no routes to find.
+        assertFalse(new NoOpClusterStore().isClustered());
+
+    }
+
+    @Test
     public void disabledClusteringGrantsEverySeatRegardlessOfLimit() throws Exception {
 
         // With cluster-enabled=false the bound store is NoOpClusterStore. A

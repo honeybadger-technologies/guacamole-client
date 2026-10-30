@@ -73,6 +73,7 @@ import org.apache.guacamole.auth.jdbc.permission.UserGroupPermissionSet;
 import org.apache.guacamole.auth.jdbc.security.PasswordPolicyService;
 import org.apache.guacamole.auth.jdbc.sharing.ConnectionSharingService;
 import org.apache.guacamole.auth.jdbc.sharing.HashSharedConnectionMap;
+import org.apache.guacamole.auth.jdbc.sharing.RedisSharedConnectionMap;
 import org.apache.guacamole.auth.jdbc.sharing.SecureRandomShareKeyGenerator;
 import org.apache.guacamole.auth.jdbc.sharing.ShareKeyGenerator;
 import org.apache.guacamole.auth.jdbc.sharing.SharedConnectionMap;
@@ -89,6 +90,7 @@ import org.apache.guacamole.auth.jdbc.usergroup.UserGroupDirectory;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupMemberUserMapper;
+import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.ClusterModule;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupParentUserGroupMapper;
 import org.apache.guacamole.auth.jdbc.usergroup.UserGroupService;
@@ -198,7 +200,21 @@ public class JDBCAuthenticationProviderModule extends MyBatisModule {
         // Cluster coordination (no-op unless cluster-enabled is true)
         install(new ClusterModule(environment));
 
-        bind(SharedConnectionMap.class).to(HashSharedConnectionMap.class).in(Scopes.SINGLETON);
+        // Share keys cross replicas only when clustering is on. A property that
+        // cannot be read degrades to single-replica sharing rather than failing
+        // the whole authentication provider to load.
+        boolean clusterEnabled = false;
+        try {
+            clusterEnabled = ClusterModule.isEnabled(environment);
+        }
+        catch (GuacamoleException e) {
+            addError(e);
+        }
+
+        if (clusterEnabled)
+            bind(SharedConnectionMap.class).to(RedisSharedConnectionMap.class).in(Scopes.SINGLETON);
+        else
+            bind(SharedConnectionMap.class).to(HashSharedConnectionMap.class).in(Scopes.SINGLETON);
         bind(ShareKeyGenerator.class).to(SecureRandomShareKeyGenerator.class).in(Scopes.SINGLETON);
         bind(SharingProfilePermissionService.class);
         bind(SharingProfileService.class);
