@@ -156,7 +156,10 @@ public class BanningAuthenticationListener implements Listener {
         else if (isClusterEnabled(environment)) {
             String redisUri = environment.getProperty(ClusterProperties.CLUSTER_REDIS_URI,
                     "redis://localhost:6379");
+            // Without the private CA every TLS handshake fails and banning
+            // silently falls back to per-replica counting
             this.tracker = new RedisAuthenticationFailureTracker(redisUri,
+                    environment.getProperty(ClusterProperties.CLUSTER_REDIS_CA_CERT),
                     maxAttempts, banDuration, maxAddresses);
             logger.info("Addresses will be automatically banned for {} seconds "
                     + "after {} failed authentication attempts, counted across "

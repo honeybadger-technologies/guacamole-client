@@ -79,6 +79,10 @@ public class RedisAuthenticationFailureTracker implements AuthenticationFailureT
      * @param redisUri
      *     The URI of the Redis service holding cluster state.
      *
+     * @param caCertificatePath
+     *     Path to the PEM CA certificate that signed the Redis server
+     *     certificate, or null to use the JVM truststore.
+     *
      * @param maxAttempts
      *     The number of failures after which an address is blocked.
      *
@@ -89,10 +93,10 @@ public class RedisAuthenticationFailureTracker implements AuthenticationFailureT
      *     The maximum number of addresses the fallback tracker will hold. This
      *     bounds the fallback only; the cluster counter has no such bound.
      */
-    public RedisAuthenticationFailureTracker(String redisUri, int maxAttempts,
-            int banDuration, long maxAddresses) {
+    public RedisAuthenticationFailureTracker(String redisUri, String caCertificatePath,
+            int maxAttempts, int banDuration, long maxAddresses) {
         this.clusterStore = new RedisClusterStore(redisUri, UNUSED_STALE_WINDOW_MS,
-                "auth-ban");
+                "auth-ban", caCertificatePath);
         this.maxAttempts = maxAttempts;
         this.banDuration = banDuration;
         this.fallback = new InMemoryAuthenticationFailureTracker(maxAttempts,
