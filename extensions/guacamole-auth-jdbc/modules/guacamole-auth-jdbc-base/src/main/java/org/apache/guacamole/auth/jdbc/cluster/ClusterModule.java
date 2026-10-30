@@ -22,9 +22,10 @@ package org.apache.guacamole.auth.jdbc.cluster;
 import com.google.inject.AbstractModule;
 import org.apache.guacamole.cluster.ClusterHeartbeat;
 import org.apache.guacamole.cluster.ClusterProperties;
+import org.apache.guacamole.cluster.ClusterSecurityPolicy;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.NoOpClusterStore;
-import org.apache.guacamole.cluster.RedisUris;
+import java.util.List;
 import java.util.UUID;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
@@ -137,11 +138,30 @@ public class ClusterModule extends AbstractModule {
                         ClusterProperties.CLUSTER_HEARTBEAT_INTERVAL,
                         DEFAULT_HEARTBEAT_INTERVAL);
 
+                boolean allowInsecure = environment.getProperty(
+                        ClusterProperties.CLUSTER_ALLOW_INSECURE_REDIS, false);
+
+                // Before the store is built, so that a refused URI is never
+                // connected to
+                String posture = ClusterSecurityPolicy.check(uri, allowInsecure);
+
                 store = new RedisClusterStore(uri, staleWindow, resolveNodeId());
                 heartbeat = new ClusterHeartbeat(store, interval);
                 heartbeat.start();
 
-                logger.info("Cluster coordination is ENABLED against \"{}\".", RedisUris.redact(uri));
+                logger.info("Cluster coordination is ENABLED. {}", posture);
+
+                // Log at ERROR and continue rather than refusing to start: a
+                // permission problem is fixable without a redeploy, and
+                // refusing would turn a degraded cluster into an outage
+                List<String> denied = store.selfCheck();
+                if (!denied.isEmpty())
+                    logger.error("Cluster coordination is enabled but Redis "
+                            + "denied or failed {} of the operations it depends "
+                            + "on: {}. Clustering will appear to work while "
+                            + "silently falling back to per-replica behaviour. "
+                            + "See deploy/redis-acl.md for the required "
+                            + "permissions.", denied.size(), denied);
 
             }
             else {

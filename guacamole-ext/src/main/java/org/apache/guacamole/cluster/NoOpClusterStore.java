@@ -19,6 +19,8 @@
 
 package org.apache.guacamole.cluster;
 
+import java.util.List;
+
 import java.util.Collection;
 import java.util.Collections;
 import org.apache.guacamole.GuacamoleException;
@@ -176,6 +178,13 @@ public class NoOpClusterStore implements ClusterStore {
     @Override
     public void shutdown() {
         // No resources are held
+    }
+
+
+    @Override
+    public List<String> selfCheck() {
+        // Nothing to check: no cluster, no permissions, no failures
+        return Collections.emptyList();
     }
 
 }

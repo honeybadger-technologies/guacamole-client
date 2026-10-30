@@ -19,6 +19,8 @@
 
 package org.apache.guacamole.cluster;
 
+import java.util.List;
+
 import java.util.Collection;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
@@ -360,5 +362,20 @@ public interface ClusterStore {
     void publishLogout(String tokenHash);
 
     void shutdown();
+
+
+    /**
+     * Exercises every Redis operation this store depends on, returning one
+     * description per operation that failed.
+     *
+     * Intended to be run once at startup. A restrictive ACL otherwise surfaces
+     * as a feature that quietly stopped working, because the failure of any
+     * single operation is caught and degraded by design.
+     *
+     * @return
+     *     A description of each failed operation, empty when every operation
+     *     succeeded.
+     */
+    List<String> selfCheck();
 
 }

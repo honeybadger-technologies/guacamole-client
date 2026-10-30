@@ -40,6 +40,7 @@ import org.apache.guacamole.net.event.ApplicationStartedEvent;
 import org.apache.guacamole.properties.BooleanGuacamoleProperty;
 import org.apache.guacamole.properties.FileGuacamoleProperties;
 import org.apache.guacamole.rest.RESTServiceModule;
+import org.apache.guacamole.rest.auth.AuthenticationService;
 import org.apache.guacamole.rest.auth.HashTokenSessionMap;
 import org.apache.guacamole.rest.auth.TokenSessionMap;
 import org.apache.guacamole.rest.event.ListenerService;
@@ -147,6 +148,13 @@ public class GuacamoleServletContextListener extends GuiceServletContextListener
      */
     @Inject
     private ListenerService listenerService;
+
+    /**
+     * The authentication service, which holds a cluster store of its own since
+     * P4b. Injected here solely so that contextDestroyed can release it.
+     */
+    @Inject
+    private AuthenticationService authenticationService;
 
     /**
      * Internal reference to the Guice injector that was lazily created when
@@ -289,6 +297,11 @@ public class GuacamoleServletContextListener extends GuiceServletContextListener
             // users out)
             if (sessionMap != null)
                 sessionMap.shutdown();
+
+            // Release the web application's own cluster store. The
+            // extensions release theirs from their own shutdown(), below
+            if (authenticationService != null)
+                authenticationService.shutdown();
 
             // Unload authentication for all extensions
             if (authProviders != null) {

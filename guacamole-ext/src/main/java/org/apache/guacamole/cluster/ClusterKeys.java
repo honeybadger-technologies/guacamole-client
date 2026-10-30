@@ -111,6 +111,18 @@ public final class ClusterKeys {
         return "guac:authfail:" + escape(address);
     }
 
+    /**
+     * Key written and deleted by the startup self-check. It sits under
+     * "guac:" so that an ACL scoped to "~guac:*" covers it without a special
+     * case.
+     *
+     * @return
+     *     The probe key used by the startup self-check.
+     */
+    public static String selfCheckProbe() {
+        return "guac:selfcheck";
+    }
+
     public static String token(String tokenHash) {
         return "guac:token:" + escape(tokenHash);
     }

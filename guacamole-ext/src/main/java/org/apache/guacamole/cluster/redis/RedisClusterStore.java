@@ -768,6 +768,98 @@ public class RedisClusterStore implements ClusterStore {
     /**
      * Clears the entire keyspace. Intended only for tests.
      */
+    @Override
+    public List<String> selfCheck() {
+
+        List<String> failures = new ArrayList<String>();
+        String key = ClusterKeys.selfCheckProbe();
+
+        // TIME is the one that has actually been missing in practice. It
+        // belongs to Redis's @fast class, which none of the data-type classes
+        // include, and both the seat script and countTunnels depend on it.
+        try {
+            commands().time();
+        }
+        catch (RedisException e) {
+            failures.add("server clock (TIME): " + e.getMessage());
+        }
+
+        try {
+            commands().set(key, "probe");
+            commands().get(key);
+        }
+        catch (RedisException e) {
+            failures.add("string read/write (SET, GET): " + e.getMessage());
+        }
+
+        try {
+            commands().expire(key, 60);
+            commands().ttl(key);
+        }
+        catch (RedisException e) {
+            failures.add("expiry (EXPIRE, TTL): " + e.getMessage());
+        }
+
+        try {
+            commands().hset(key + ":h", "field", "value");
+            commands().hgetall(key + ":h");
+        }
+        catch (RedisException e) {
+            failures.add("hash read/write (HSET, HGETALL): " + e.getMessage());
+        }
+
+        try {
+            commands().zadd(key + ":z", 1.0, "member");
+            commands().zcount(key + ":z", io.lettuce.core.Range.from(
+                    io.lettuce.core.Range.Boundary.excluding(0.0),
+                    io.lettuce.core.Range.Boundary.unbounded()));
+            commands().zrem(key + ":z", "member");
+        }
+        catch (RedisException e) {
+            failures.add("sorted sets (ZADD, ZCOUNT, ZREM): " + e.getMessage());
+        }
+
+        try {
+            commands().publish(ClusterKeys.KILL_CHANNEL, "selfcheck");
+        }
+        catch (RedisException e) {
+            failures.add("publish (PUBLISH): " + e.getMessage());
+        }
+
+        // Exercises SCRIPT LOAD and EVALSHA together, the key pattern the ACL
+        // applies to script keys, and TIME from inside a script -- which is
+        // where the missing permission actually hid
+        try {
+            acquireSeats.eval(commands(), new String[] { key + ":z" },
+                    new String[] { "selfcheck", Long.toString(staleWindowMs), "1" });
+        }
+        catch (RedisException e) {
+            failures.add("scripting (SCRIPT LOAD, EVALSHA): " + e.getMessage());
+        }
+
+        try {
+            commands().del(key, key + ":h", key + ":z");
+        }
+        catch (RedisException e) {
+            failures.add("delete (DEL): " + e.getMessage());
+        }
+
+        return failures;
+
+    }
+
+    /**
+     * Returns how many of this check's probe keys remain. Intended only for
+     * tests.
+     *
+     * @return
+     *     The number of probe keys still present.
+     */
+    public long probeKeyCountForTesting() {
+        String key = ClusterKeys.selfCheckProbe();
+        return commands().exists(key, key + ":h", key + ":z");
+    }
+
     public void flushForTesting() {
         commands().flushall();
     }
