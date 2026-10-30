@@ -44,6 +44,11 @@ public final class ClusterKeys {
      */
     public static final String SHARE_REVOKE_CHANNEL = "guac:share:revoke";
 
+    /**
+     * Channel on which logouts are published.
+     */
+    public static final String LOGOUT_CHANNEL = "guac:logout";
+
     private ClusterKeys() {}
 
     /**
@@ -104,6 +109,10 @@ public final class ClusterKeys {
 
     public static String authFailure(String address) {
         return "guac:authfail:" + escape(address);
+    }
+
+    public static String token(String tokenHash) {
+        return "guac:token:" + escape(tokenHash);
     }
 
 }

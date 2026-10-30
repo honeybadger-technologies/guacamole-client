@@ -52,14 +52,6 @@
             <artifactId>guacamole-ext</artifactId>
         </dependency>
 
-        <!-- Cluster coordination -->
-        <dependency>
-            <groupId>org.apache.guacamole</groupId>
-            <artifactId>guacamole-cluster</artifactId>
-            <version>${revision}</version>
-            <scope>compile</scope>
-        </dependency>
-
         <!-- MyBatis -->
         <dependency>
             <groupId>org.mybatis</groupId>
@@ -107,6 +99,19 @@
             <artifactId>guava</artifactId>
         </dependency>
 
-    </dependencies>
+    
+        <!-- JUnit 5 (cluster wiring tests) -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+</dependencies>
 
 </project>

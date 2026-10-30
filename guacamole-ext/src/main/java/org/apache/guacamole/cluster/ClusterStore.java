@@ -293,6 +293,72 @@ public interface ClusterStore {
      */
     int getAuthenticationFailures(String address);
 
+    /**
+     * Publishes the identity behind a session token, so that the session can be
+     * rebuilt on any replica.
+     *
+     * @param tokenHash
+     *     The hash of the token. The token itself is never stored.
+     *
+     * @param identity
+     *     The identity the token resolves to.
+     *
+     * @param timeoutSeconds
+     *     The idle lifetime of the token, in seconds.
+     */
+    void putToken(String tokenHash, TokenIdentity identity, int timeoutSeconds);
+
+    /**
+     * Returns the identity behind the given session token.
+     *
+     * @param tokenHash
+     *     The hash of the token being looked up.
+     *
+     * @return
+     *     The identity behind the given token, or null if the token is unknown
+     *     or cannot be read.
+     */
+    TokenIdentity getToken(String tokenHash);
+
+    /**
+     * Removes the given session token, so that it can no longer be rebuilt
+     * anywhere.
+     *
+     * @param tokenHash
+     *     The hash of the token being removed.
+     */
+    void removeToken(String tokenHash);
+
+    /**
+     * Refreshes the idle lifetime of the given session token.
+     *
+     * @param tokenHash
+     *     The hash of the token being refreshed.
+     *
+     * @param timeoutSeconds
+     *     The idle lifetime of the token, in seconds.
+     */
+    void touchToken(String tokenHash, int timeoutSeconds);
+
+    /**
+     * Registers the handler to be invoked when a session is logged out anywhere
+     * in the cluster, so that a session rebuilt from that token on this replica
+     * can be dropped.
+     *
+     * @param handler
+     *     The handler to invoke on logout.
+     */
+    void onLogout(ClusterLogoutHandler handler);
+
+    /**
+     * Announces to every replica that the session behind the given token hash
+     * has been logged out.
+     *
+     * @param tokenHash
+     *     The hash of the token which is no longer valid.
+     */
+    void publishLogout(String tokenHash);
+
     void shutdown();
 
 }

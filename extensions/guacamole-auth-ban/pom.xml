@@ -72,14 +72,6 @@
             <version>2.9.3</version>
         </dependency>
 
-        <!-- Cluster coordination (Redis-backed failure tracking) -->
-        <dependency>
-            <groupId>org.apache.guacamole</groupId>
-            <artifactId>guacamole-cluster</artifactId>
-            <version>${revision}</version>
-            <scope>compile</scope>
-        </dependency>
-
     </dependencies>
 
 </project>
