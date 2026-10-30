@@ -21,9 +21,13 @@ package org.apache.guacamole.cluster.redis;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
+import java.util.Collections;
 import org.apache.guacamole.cluster.ClusterKeys;
 import org.apache.guacamole.cluster.SeatRequestBuilder;
 import org.apache.guacamole.cluster.SeatResult;
+import org.apache.guacamole.cluster.TunnelRegistration;
+import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
+import org.apache.guacamole.net.auth.GuacamoleProxyConfiguration.EncryptionMethod;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -104,6 +108,41 @@ public class SeatPruningTest {
                 SeatRequestBuilder.forConnection("live-1", "alice", "conn-1", 2, 0)));
         assertEquals(SeatResult.SUCCESS, store.acquireSeats(
                 SeatRequestBuilder.forConnection("live-2", "bob", "conn-1", 2, 0)));
+
+    }
+
+    /**
+     * Verifies that the heartbeat keeps a live tunnel's per-user seats
+     * current, so that a session older than the stale window still counts
+     * against "max-connections-per-user". Without this, the seat script
+     * would prune the seat as stale and admit a second connection from the
+     * same user on another replica.
+     *
+     * @throws Exception
+     *     If a seat cannot be acquired or the heartbeat fails.
+     */
+    @Test
+    public void heartbeatKeepsPerUserSeatsAlive() throws Exception {
+
+        String userSeat = ClusterKeys.userConnectionSeat("alice", "conn-1");
+
+        // Alice holds her one permitted seat on conn-1
+        assertEquals(SeatResult.SUCCESS, store.acquireSeats(
+                SeatRequestBuilder.forConnection("live-1", "alice", "conn-1", 0, 1)));
+
+        // Age every seat past the stale window, as if the session had been
+        // open longer than that, then let the owning replica heartbeat it
+        long ancient = System.currentTimeMillis() - (STALE_WINDOW_MS * 10);
+        connection.sync().zadd(userSeat, (double) ancient, "live-1");
+        store.heartbeat(Collections.singletonList(new TunnelRegistration(
+                "live-1", "node-1", "$abc",
+                new GuacdEndpoint("guacd", 4822, EncryptionMethod.NONE),
+                "conn-1", null, null, "alice", "10.0.0.5",
+                System.currentTimeMillis(), "record-live-1")));
+
+        // The heartbeated seat must still count
+        assertEquals(SeatResult.USER_CONNECTION_LIMIT, store.acquireSeats(
+                SeatRequestBuilder.forConnection("live-2", "alice", "conn-1", 0, 1)));
 
     }
 
