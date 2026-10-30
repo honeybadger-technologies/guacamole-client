@@ -20,6 +20,7 @@
 package org.apache.guacamole.cluster;
 
 import java.util.Collection;
+import java.util.Collections;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.cluster.guacd.GuacdEndpoint;
 
@@ -66,12 +67,37 @@ public class NoOpClusterStore implements ClusterStore {
     }
 
     @Override
+    public Collection<TunnelRegistration> listTunnels() {
+        return Collections.<TunnelRegistration>emptyList();
+    }
+
+    @Override
+    public String lookupSeatToken(String recordUuid) {
+        return null;
+    }
+
+    @Override
     public String getNodeId() {
         return "local";
     }
 
     @Override
     public boolean isAvailable() {
+        return false;
+    }
+
+    @Override
+    public void onKillRequest(ClusterKillHandler handler) {
+        // Nothing is broadcast when clustering is disabled
+    }
+
+    @Override
+    public void requestKill(String recordUuid) throws GuacamoleException {
+        // Every tunnel is local when clustering is disabled
+    }
+
+    @Override
+    public boolean isTunnelLive(String seatToken) {
         return false;
     }
 

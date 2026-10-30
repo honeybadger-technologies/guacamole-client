@@ -25,6 +25,8 @@ import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.lettuce.core.pubsub.RedisPubSubAdapter;
+import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import java.util.ArrayList;
 import java.time.Duration;
 import java.util.Collection;
@@ -34,6 +36,7 @@ import java.util.Map;
 import org.apache.guacamole.GuacamoleException;
 import org.apache.guacamole.GuacamoleServerException;
 import org.apache.guacamole.cluster.ClusterKeys;
+import org.apache.guacamole.cluster.ClusterKillHandler;
 import org.apache.guacamole.cluster.ClusterStore;
 import org.apache.guacamole.cluster.SeatKey;
 import org.apache.guacamole.cluster.SeatRequest;
@@ -80,6 +83,13 @@ public class RedisClusterStore implements ClusterStore {
      * than written off for the lifetime of the replica.
      */
     private volatile long unavailableSince = 0L;
+
+    /**
+     * Dedicated connection for kill broadcasts. Pub/sub cannot share the
+     * command connection: a subscribed Redis connection accepts only
+     * subscription commands.
+     */
+    private volatile StatefulRedisPubSubConnection<String, String> pubSubConnection;
     private final LuaScript acquireSeats = LuaScript.load(ACQUIRE_SEATS_SCRIPT);
     private final long staleWindowMs;
     private final String nodeId;
@@ -261,6 +271,9 @@ public class RedisClusterStore implements ClusterStore {
             if (registration.getRemoteHost() != null)
                 record.put("remoteHost", registration.getRemoteHost());
 
+            if (registration.getRecordUuid() != null)
+                record.put("recordUuid", registration.getRecordUuid());
+
             String tunnelKey = ClusterKeys.tunnel(registration.getTunnelUuid());
             commands.hset(tunnelKey, record);
             commands.pexpire(tunnelKey, staleWindowMs);
@@ -272,6 +285,12 @@ public class RedisClusterStore implements ClusterStore {
                 String routeKey = ClusterKeys.route(registration.getGuacdConnectionId());
                 commands.psetex(routeKey, staleWindowMs, registration.getEndpoint().toKey());
             }
+
+            // Lets a kill addressed by history record UUID find the cluster
+            // state, which is keyed by seat token
+            if (registration.getRecordUuid() != null)
+                commands.psetex(ClusterKeys.record(registration.getRecordUuid()),
+                        staleWindowMs, registration.getTunnelUuid());
 
             available = true;
 
@@ -298,6 +317,9 @@ public class RedisClusterStore implements ClusterStore {
 
             if (registration.getGuacdConnectionId() != null)
                 commands.del(ClusterKeys.route(registration.getGuacdConnectionId()));
+
+            if (registration.getRecordUuid() != null)
+                commands.del(ClusterKeys.record(registration.getRecordUuid()));
 
             available = true;
 
@@ -330,6 +352,10 @@ public class RedisClusterStore implements ClusterStore {
 
                 if (registration.getGuacdConnectionId() != null)
                     commands.pexpire(ClusterKeys.route(registration.getGuacdConnectionId()),
+                            staleWindowMs);
+
+                if (registration.getRecordUuid() != null)
+                    commands.pexpire(ClusterKeys.record(registration.getRecordUuid()),
                             staleWindowMs);
 
             }
@@ -395,6 +421,85 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
+    public Collection<TunnelRegistration> listTunnels() {
+
+        List<TunnelRegistration> tunnels = new ArrayList<TunnelRegistration>();
+
+        try {
+
+            RedisCommands<String, String> commands = commands();
+            long cutoff = serverTimeMillis(commands) - staleWindowMs;
+
+            // Score-filtered, so members left behind by a dead replica are
+            // never listed even before anything prunes them
+            List<String> seatTokens = commands.zrangebyscore(ClusterKeys.ALL_INDEX,
+                    io.lettuce.core.Range.from(
+                            io.lettuce.core.Range.Boundary.excluding((double) cutoff),
+                            io.lettuce.core.Range.Boundary.unbounded()));
+
+            for (String seatToken : seatTokens) {
+
+                Map<String, String> record = commands.hgetall(ClusterKeys.tunnel(seatToken));
+
+                // The hash expires on its own TTL, so a member can outlive it
+                if (record.isEmpty())
+                    continue;
+
+                String endpointKey = record.get("guacdEndpoint");
+                String startTime = record.get("startTime");
+
+                tunnels.add(new TunnelRegistration(
+                        seatToken,
+                        record.get("nodeId"),
+                        record.get("guacdConnectionId"),
+                        endpointKey != null ? GuacdEndpoint.fromKey(endpointKey) : null,
+                        record.get("connIdentifier"),
+                        record.get("groupIdentifier"),
+                        record.get("sharingProfileId"),
+                        record.get("username"),
+                        record.get("remoteHost"),
+                        startTime != null ? Long.parseLong(startTime) : 0L,
+                        record.get("recordUuid")));
+
+            }
+
+            available = true;
+
+        }
+
+        // The administrative view degrades to replica-local rather than
+        // failing outright (spec 6.1)
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to list cluster tunnels. The active connection "
+                    + "view will show only this replica's sessions.", e);
+        }
+
+        return tunnels;
+
+    }
+
+    @Override
+    public String lookupSeatToken(String recordUuid) {
+
+        try {
+            String token = commands().get(ClusterKeys.record(recordUuid));
+            available = true;
+            return token;
+        }
+
+        // The caller degrades to a replica-local view rather than failing
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            logger.warn("Unable to resolve record \"{}\" to a seat token.", recordUuid, e);
+            return null;
+        }
+
+    }
+
+    @Override
     public String getNodeId() {
         return nodeId;
     }
@@ -412,7 +517,85 @@ public class RedisClusterStore implements ClusterStore {
     }
 
     @Override
+    public void onKillRequest(final ClusterKillHandler handler) {
+
+        try {
+
+            StatefulRedisPubSubConnection<String, String> pubSub = client.connectPubSub();
+
+            pubSub.addListener(new RedisPubSubAdapter<String, String>() {
+
+                @Override
+                public void message(String channel, String recordUuid) {
+                    try {
+                        handler.killLocalTunnel(recordUuid);
+                    }
+
+                    // A handler that throws must not kill the subscriber
+                    catch (Throwable e) {
+                        logger.warn("Kill request for \"{}\" could not be handled.",
+                                recordUuid, e);
+                    }
+                }
+
+            });
+
+            pubSub.sync().subscribe(ClusterKeys.KILL_CHANNEL);
+            pubSubConnection = pubSub;
+
+        }
+
+        // Without a subscription this replica simply never honours remote
+        // kills; it must still serve connections
+        catch (RedisException e) {
+            logger.error("Unable to subscribe to cluster kill requests. Sessions "
+                    + "on this replica cannot be terminated from another one.", e);
+        }
+
+    }
+
+    @Override
+    public void requestKill(String recordUuid) throws GuacamoleException {
+
+        try {
+            commands().publish(ClusterKeys.KILL_CHANNEL, recordUuid);
+            available = true;
+        }
+
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            throw new GuacamoleServerException("Unable to request cluster kill.", e);
+        }
+
+    }
+
+    @Override
+    public boolean isTunnelLive(String seatToken) {
+
+        try {
+            boolean live = commands().exists(ClusterKeys.tunnel(seatToken)) > 0;
+            available = true;
+            return live;
+        }
+
+        // Reporting "gone" would claim a kill landed when that is unknown;
+        // reporting "live" makes the caller wait out its own timeout and
+        // report failure, which is the honest answer
+        catch (RedisException e) {
+            available = false;
+            unavailableSince = System.currentTimeMillis();
+            return true;
+        }
+
+    }
+
+    @Override
     public void shutdown() {
+
+        StatefulRedisPubSubConnection<String, String> pubSub = pubSubConnection;
+        if (pubSub != null)
+            pubSub.close();
 
         StatefulRedisConnection<String, String> current = connection;
         if (current != null)

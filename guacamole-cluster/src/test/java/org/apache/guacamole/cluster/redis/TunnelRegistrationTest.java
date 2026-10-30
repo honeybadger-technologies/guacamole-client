@@ -86,7 +86,7 @@ public class TunnelRegistrationTest {
             String guacdConnectionId) {
         return new TunnelRegistration(uuid, "node-1", guacdConnectionId, endpoint,
                 "conn-1", "group-1", null, "alice", "10.0.0.5",
-                System.currentTimeMillis());
+                System.currentTimeMillis(), "record-" + uuid);
     }
 
     @Test
@@ -213,9 +213,54 @@ public class TunnelRegistrationTest {
 
         store.registerTunnel(new TunnelRegistration(token, "node-1", "$abc",
                 GUACD_A, "conn-1", null, null, "alice", "10.0.0.5",
-                System.currentTimeMillis()));
+                System.currentTimeMillis(), "record-" + token));
 
         assertEquals(1L, connection.sync().zcard(ClusterKeys.connectionIndex("conn-1")));
+
+    }
+
+    @Test
+    public void recordUuidIsStoredAndResolvesToTheSeatToken() throws Exception {
+
+        // The admin UI identifies a session by its record UUID, but every
+        // cluster key is built from the seat token. Without this pointer a
+        // remote session could be listed and never killed.
+        store.registerTunnel(new TunnelRegistration("seat-1", "node-1", "$abc",
+                GUACD_A, "conn-1", null, null, "alice", "10.0.0.5",
+                System.currentTimeMillis(), "record-uuid-1"));
+
+        assertEquals("record-uuid-1",
+                connection.sync().hget(ClusterKeys.tunnel("seat-1"), "recordUuid"));
+        assertEquals("seat-1", store.lookupSeatToken("record-uuid-1"));
+
+    }
+
+    @Test
+    public void tunnelWithNoRecordUuidIsStillRegistered() throws Exception {
+
+        // getUUID() is null when the history row was never inserted. Such a
+        // tunnel still holds seats and still needs its guacd route, so it must
+        // register -- it is simply not addressable by the admin UI.
+        store.registerTunnel(new TunnelRegistration("seat-2", "node-1", "$def",
+                GUACD_A, "conn-1", null, null, "alice", "10.0.0.5",
+                System.currentTimeMillis(), null));
+
+        assertEquals(GUACD_A, store.lookupRoute("$def"));
+        assertNull(store.lookupSeatToken("record-uuid-missing"));
+
+    }
+
+    @Test
+    public void unregisterRemovesTheRecordPointer() throws Exception {
+
+        TunnelRegistration record = new TunnelRegistration("seat-3", "node-1", "$ghi",
+                GUACD_A, "conn-1", null, null, "alice", "10.0.0.5",
+                System.currentTimeMillis(), "record-uuid-3");
+
+        store.registerTunnel(record);
+        store.unregisterTunnel(record);
+
+        assertNull(store.lookupSeatToken("record-uuid-3"));
 
     }
 

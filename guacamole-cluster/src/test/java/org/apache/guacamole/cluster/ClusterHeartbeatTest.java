@@ -74,7 +74,8 @@ public class ClusterHeartbeatTest {
 
     private TunnelRegistration registration(String uuid) {
         return new TunnelRegistration(uuid, "node-1", "$" + uuid, ENDPOINT,
-                "conn-1", null, null, "alice", null, System.currentTimeMillis());
+                "conn-1", null, null, "alice", null, System.currentTimeMillis(),
+                "record-" + uuid);
     }
 
     @Test

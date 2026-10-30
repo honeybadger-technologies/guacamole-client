@@ -124,6 +124,30 @@ public interface ClusterStore {
     long countTunnels(GuacdEndpoint endpoint);
 
     /**
+     * Returns every tunnel currently live anywhere in the cluster, including
+     * those owned by this replica.
+     *
+     * @return
+     *     Every live tunnel, or an empty collection if the store is
+     *     unavailable. Never null -- the administrative view degrades to a
+     *     replica-local listing rather than failing.
+     */
+    Collection<TunnelRegistration> listTunnels();
+
+    /**
+     * Returns the seat token of the tunnel whose history record has the given
+     * UUID.
+     *
+     * @param recordUuid
+     *     The UUID of the connection history record.
+     *
+     * @return
+     *     The seat token identifying that tunnel's cluster state, or null if
+     *     no such tunnel is known or the store is unavailable.
+     */
+    String lookupSeatToken(String recordUuid);
+
+    /**
      * @return
      *     The identity of this replica, as recorded on every tunnel this
      *     replica owns. Used to decide whether a tunnel can be closed locally
@@ -137,6 +161,36 @@ public interface ClusterStore {
      *     operation, false if callers should degrade to replica-local behavior.
      */
     boolean isAvailable();
+
+    /**
+     * Registers the handler invoked when any replica requests a kill.
+     *
+     * @param handler
+     *     The handler to invoke for every kill request received.
+     */
+    void onKillRequest(ClusterKillHandler handler);
+
+    /**
+     * Asks every replica to close the tunnel with the given history record
+     * UUID. Only the owning replica will act.
+     *
+     * @param recordUuid
+     *     The UUID of the history record identifying the tunnel to close.
+     *
+     * @throws GuacamoleException
+     *     If the request cannot be published.
+     */
+    void requestKill(String recordUuid) throws GuacamoleException;
+
+    /**
+     * @param seatToken
+     *     The seat token identifying a tunnel.
+     *
+     * @return
+     *     true if that tunnel is still published to the cluster, false if it
+     *     has gone or the store is unavailable.
+     */
+    boolean isTunnelLive(String seatToken);
 
     /**
      * Releases all resources held by this store.
